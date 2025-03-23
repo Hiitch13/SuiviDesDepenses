@@ -1,0 +1,20 @@
+{
+  "expenses": [],
+  "fixedExpenses": [
+    {
+      "id": "1",
+      "amount": 500,
+      "description": "Loyer"
+    },
+    {
+      "id": "2",
+      "amount": 50,
+      "description": "Internet"
+    },
+    {
+      "id": "3",
+      "amount": 80,
+      "description": "Électricité"
+    }
+  ]
+}
