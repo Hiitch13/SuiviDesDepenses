@@ -3,8 +3,9 @@
   "fixedExpenses": [
     {
       "id": "1",
-      "amount": 500,
-      "description": "Loyer"
+      "amount": 190,
+      "description": "Loyer",
+      "isExceptional": false
     },
     {
       "id": "2",

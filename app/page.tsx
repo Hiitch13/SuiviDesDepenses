@@ -11,6 +11,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
+
 import {
   Dialog,
   DialogContent,
@@ -19,6 +20,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogClose,
 } from "@/components/ui/dialog"
 import { useToast } from "@/components/ui/use-toast"
 
@@ -531,8 +533,21 @@ export default function ExpenseTracker() {
                             </div>
                           </div>
                           <DialogFooter>
-                            <Button onClick={saveEditFixedExpense}>Enregistrer</Button>
-                          </DialogFooter>
+  {/* DialogClose va fermer le modal par défaut */}
+  <DialogClose asChild>
+    <Button
+      onClick={async (event) => {
+        const success = await saveEditFixedExpense()
+        if (!success) {
+          // En cas d’erreur, on empêche la fermeture
+          event.preventDefault()
+        }
+      }}
+    >
+      Enregistrer
+    </Button>
+  </DialogClose>
+</DialogFooter>
                         </DialogContent>
                       </Dialog>
                       <Button variant="ghost" size="icon" onClick={() => deleteFixedExpense(expense.id)}>
