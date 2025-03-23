@@ -1,11 +1,9 @@
 {
-  "expenses": [],
-  "fixedExpenses": [
+  "defaultFixedExpenses": [
     {
       "id": "1",
-      "amount": 190,
-      "description": "Loyer",
-      "isExceptional": false
+      "amount": 500,
+      "description": "Loyer"
     },
     {
       "id": "2",
@@ -16,6 +14,35 @@
       "id": "3",
       "amount": 80,
       "description": "Électricité"
+    },
+    {
+      "id": "1742734316519",
+      "amount": 200,
+      "description": "test"
+    }
+  ],
+  "months": [
+    {
+      "month": "2025-03",
+      "salary": 1800,
+      "expenses": [],
+      "fixedExpenses": [
+        {
+          "id": "1",
+          "amount": 500,
+          "description": "Loyer"
+        },
+        {
+          "id": "2",
+          "amount": 50,
+          "description": "Internet"
+        },
+        {
+          "id": "3",
+          "amount": 80,
+          "description": "Électricité"
+        }
+      ]
     }
   ]
 }
