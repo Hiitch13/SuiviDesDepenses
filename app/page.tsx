@@ -88,6 +88,7 @@ export default function ExpenseTracker() {
     { id: "restaurant", name: "Restaurant" },
     { id: "shopping", name: "Shopping" },
     { id: "sante", name: "Santé" },
+    { id: "epargne", name: "Epargne" },
     { id: "autres", name: "Autres" },
   ]
 
