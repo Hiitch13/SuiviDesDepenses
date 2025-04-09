@@ -35,6 +35,33 @@ const binId = "67f25abc8561e97a50f9a5ff";
 const apiKey = process.env.JSONBIN_API_KEY || "TA_CLE_API";
 console.log("Clé JSONBin : ", process.env.JSONBIN_API_KEY);
 
+// === DELETE ===
+export async function DELETE(request: Request) {
+  try {
+    const { searchParams } = new URL(request.url)
+    const monthToDelete = searchParams.get("month")
+
+    if (!monthToDelete) {
+      return NextResponse.json({ error: "Mois non spécifié" }, { status: 400 })
+    }
+
+    const allData = await getAllData()
+
+    const updatedMonths = allData.months.filter(m => m.month !== monthToDelete)
+
+    if (updatedMonths.length === allData.months.length) {
+      return NextResponse.json({ error: "Mois introuvable" }, { status: 404 })
+    }
+
+    allData.months = updatedMonths
+    await putAllData(allData)
+
+    return NextResponse.json({ success: true })
+  } catch (error) {
+    console.error("Erreur lors de la suppression :", error)
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 })
+  }
+}
 
 // === Fonctions d'accès à JSONBin ===
 async function getAllData(): Promise<AllData> {
@@ -107,11 +134,18 @@ export async function POST(request: Request) {
 
     // 3) Pour chaque charge fixe du mois, si elle n'existe pas dans defaultFixedExpenses, on l'ajoute
     newMonthData.fixedExpenses.forEach((fx) => {
-      const alreadyInDefaults = allData.defaultFixedExpenses.find((d) => d.id === fx.id);
-      if (!alreadyInDefaults) {
+      const existing = allData.defaultFixedExpenses.find((d) => d.id === fx.id);
+      if (!existing) {
+        // Nouvelle charge fixe : on l'ajoute
         allData.defaultFixedExpenses.push(fx);
+      } else {
+        // Charge fixe existante : on la met à jour
+        existing.amount = fx.amount;
+        existing.description = fx.description;
+        existing.isExceptional = fx.isExceptional;
       }
     });
+    
 
     // 4) Mettre à jour le mois existant ou l'ajouter
     if (index !== -1) {

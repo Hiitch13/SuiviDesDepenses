@@ -384,59 +384,92 @@ export default function ExpenseTracker() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex flex-col md:flex-row gap-4">
-            {/* Sélection d'un mois existant */}
-            <div>
-              <Label>Mois disponible :</Label>
-              <Select
-                onValueChange={(val) => {
-                  // Quand on sélectionne un mois, on charge ses données
-                  fetchMonthData(val)
-                }}
-              >
-                <SelectTrigger className="w-[200px] mt-1">
-                  <SelectValue placeholder="Choisir un mois" />
-                </SelectTrigger>
-                <SelectContent>
-                  {allMonths.length === 0 && (
-                    <SelectItem value="all" disabled>Aucun mois</SelectItem>
-                  )}
-                  {allMonths.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+  <div className="flex flex-col md:flex-row gap-4">
+    {/* Sélection d'un mois existant */}
+    <div>
+      <Label>Mois disponible :</Label>
+      <div className="flex items-center gap-2">
+        <Select
+          onValueChange={(val) => {
+            fetchMonthData(val)
+          }}
+        >
+          <SelectTrigger className="w-[200px] mt-1">
+            <SelectValue placeholder="Choisir un mois" />
+          </SelectTrigger>
+          <SelectContent>
+            {allMonths.length === 0 && (
+              <SelectItem value="all" disabled>Aucun mois</SelectItem>
+            )}
+            {allMonths.map((m) => (
+              <SelectItem key={m} value={m}>
+                {m}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
 
-            {/* Création d'un nouveau mois */}
-            <form onSubmit={createNewMonth} className="flex flex-col md:flex-row gap-2 items-end">
-              <div>
-                <Label htmlFor="newMonthInput">Nouveau mois (YYYY-MM)</Label>
-                <Input
-                  id="newMonthInput"
-                  placeholder="2025-05"
-                  value={newMonthInput}
-                  onChange={(e) => setNewMonthInput(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label htmlFor="newMonthSalary">Salaire (€)</Label>
-                <Input
-                  id="newMonthSalary"
-                  type="number"
-                  placeholder="2000"
-                  value={newMonthSalary}
-                  onChange={(e) => setNewMonthSalary(e.target.value)}
-                />
-              </div>
-              <Button type="submit" className="mt-4 md:mt-6">
-                Créer
-              </Button>
-            </form>
-          </div>
-        </CardContent>
+        {/* Bouton supprimer à côté */}
+        {month && (
+            <Button
+            variant="destructive"
+            size="icon"
+            onClick={async () => {
+              if (confirm(`Supprimer le mois ${month} ?`)) {
+              const res = await fetch(`/api/expenses?month=${month}`, {
+                method: "DELETE",
+              })
+              if (res.ok) {
+                toast({ title: `Mois ${month} supprimé` })
+                setMonth("")
+                setSalary("")
+                setExpenses([])
+                setFixedExpenses([])
+                fetchAllMonths()
+              } else {
+                toast({
+                title: "Erreur",
+                description: "Impossible de supprimer ce mois",
+                variant: "destructive",
+                })
+              }
+              }
+            }}
+            >
+            <Trash2 className="h-4 w-4" />
+            </Button>
+        )}
+      </div>
+    </div>
+
+    {/* Création d'un nouveau mois */}
+    <form onSubmit={createNewMonth} className="flex flex-col md:flex-row gap-2 items-end">
+      <div>
+        <Label htmlFor="newMonthInput">Nouveau mois (YYYY-MM)</Label>
+        <Input
+          id="newMonthInput"
+          placeholder="2025-05"
+          value={newMonthInput}
+          onChange={(e) => setNewMonthInput(e.target.value)}
+        />
+      </div>
+      <div>
+        <Label htmlFor="newMonthSalary">Salaire (€)</Label>
+        <Input
+          id="newMonthSalary"
+          type="number"
+          placeholder="2000"
+          value={newMonthSalary}
+          onChange={(e) => setNewMonthSalary(e.target.value)}
+        />
+      </div>
+      <Button type="submit" className="mt-4 md:mt-6">
+        Créer
+      </Button>
+    </form>
+  </div>
+</CardContent>
+
       </Card>
 
       {/* Si aucun mois n'est chargé, on arrête là */}
