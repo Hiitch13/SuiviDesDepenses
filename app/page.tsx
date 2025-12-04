@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, FormEvent } from "react"
-import { Plus, Edit, Trash2, User, LogOut, Wallet } from "lucide-react"
+import { Plus, Edit, Trash2, User, LogOut, Wallet, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -41,14 +41,13 @@ type FixedExpense = {
 }
 
 type MonthData = {
-  user?: string // Ajout du champ user
+  user?: string
   month: string
   salary: number
   expenses: Expense[]
   fixedExpenses: FixedExpense[]
 }
 
-// Pour l'affichage de la liste de mois
 type AllData = {
   months: MonthData[]
 }
@@ -56,7 +55,11 @@ type AllData = {
 export default function ExpenseTracker() {
   // === STATE UTILISATEUR ===
   const [currentUser, setCurrentUser] = useState<string | null>(null)
+  
+  // Champs Login
   const [usernameInput, setUsernameInput] = useState("")
+  const [passwordInput, setPasswordInput] = useState("")
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
 
   // NEW: liste de tous les mois disponibles
   const [allMonths, setAllMonths] = useState<string[]>([])
@@ -98,17 +101,47 @@ export default function ExpenseTracker() {
   ]
 
   // =========================
-  // 0. Gestion Utilisateur
+  // 0. Gestion Utilisateur (LOGIN AVEC MDP)
   // =========================
-  function handleLogin(e: FormEvent) {
+  async function handleLogin(e: FormEvent) {
     e.preventDefault()
-    if (usernameInput.trim()) {
-      setCurrentUser(usernameInput.trim())
-      // On reset les données locales pour éviter d'afficher les données de l'ancien user
-      setMonth("")
-      setSalary("")
-      setExpenses([])
-      setFixedExpenses([])
+    if (!usernameInput.trim() || !passwordInput.trim()) {
+        toast({ title: "Champs requis", description: "Veuillez entrer un pseudo et un mot de passe", variant: "destructive" })
+        return
+    }
+
+    setIsLoggingIn(true)
+    try {
+        const res = await fetch("/api/expenses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ 
+                isAuth: true, 
+                username: usernameInput.trim(), 
+                password: passwordInput.trim() 
+            })
+        })
+
+        const data = await res.json()
+
+        if (res.ok) {
+            setCurrentUser(usernameInput.trim())
+            toast({ title: data.message })
+            
+            // Reset datas
+            setMonth("")
+            setSalary("")
+            setExpenses([])
+            setFixedExpenses([])
+        } else {
+            toast({ title: "Erreur", description: data.error, variant: "destructive" })
+        }
+
+    } catch (error) {
+        console.error(error)
+        toast({ title: "Erreur réseau", description: "Impossible de se connecter", variant: "destructive" })
+    } finally {
+        setIsLoggingIn(false)
     }
   }
 
@@ -116,27 +149,26 @@ export default function ExpenseTracker() {
     setCurrentUser(null)
     setAllMonths([])
     setMonth("")
+    setPasswordInput("")
+    setUsernameInput("")
   }
 
   // =========================
-  // 1. Charger la liste de tous les mois (POUR L'USER COURANT)
+  // 1. Charger la liste de tous les mois
   // =========================
   async function fetchAllMonths() {
-    if (!currentUser) return // Sécurité
+    if (!currentUser) return 
 
     try {
       setIsLoading(true)
-      // On passe l'utilisateur en paramètre GET
       const res = await fetch(`/api/expenses?user=${currentUser}`)
-      if (!res.ok) throw new Error("Erreur lors du chargement de la liste des mois")
+      if (!res.ok) throw new Error("Erreur chargement")
 
       const data: AllData = await res.json()
-      // On suppose que l'API renvoie { months: [...] } filtré pour cet user
       const monthsList = data.months.map((m) => m.month)
       setAllMonths(monthsList)
     } catch (error) {
       console.error(error)
-      // Si c'est le premier login de cet user, ce n'est pas grave d'avoir une erreur ou liste vide
     } finally {
       setIsLoading(false)
     }
@@ -151,9 +183,7 @@ export default function ExpenseTracker() {
     try {
       setIsLoading(true)
       const res = await fetch(`/api/expenses?month=${selectedMonth}&user=${currentUser}`)
-      if (!res.ok) {
-        throw new Error("Mois introuvable")
-      }
+      if (!res.ok) throw new Error("Mois introuvable")
       const data: MonthData = await res.json()
 
       setMonth(data.month)
@@ -162,22 +192,15 @@ export default function ExpenseTracker() {
       setFixedExpenses(data.fixedExpenses)
     } catch (error) {
       console.error(error)
-      toast({
-        title: "Erreur",
-        description: `Impossible de charger le mois ${selectedMonth}`,
-        variant: "destructive",
-      })
+      toast({ title: "Erreur", description: "Impossible de charger le mois", variant: "destructive" })
       setMonth("")
-      setSalary("")
-      setExpenses([])
-      setFixedExpenses([])
     } finally {
       setIsLoading(false)
     }
   }
 
   // =========================
-  // 3. Au changement d'utilisateur, charger ses mois
+  // 3. Effet au login
   // =========================
   useEffect(() => {
     if (currentUser) {
@@ -186,7 +209,7 @@ export default function ExpenseTracker() {
   }, [currentUser])
 
   // =========================
-  // 4. saveData: POST (ajout / maj du mois)
+  // 4. saveData
   // =========================
   async function saveData(
     newExpenses: Expense[],
@@ -194,10 +217,7 @@ export default function ExpenseTracker() {
     newMonth: string = month,
     newSalary: number = parseFloat(salary)
   ) {
-    if (!newMonth || !currentUser) {
-      toast({ title: "Erreur", description: "Données manquantes", variant: "destructive" })
-      return false
-    }
+    if (!newMonth || !currentUser) return false
 
     try {
       setIsLoading(true)
@@ -205,25 +225,19 @@ export default function ExpenseTracker() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user: currentUser, // On envoie l'utilisateur
+          user: currentUser, 
           month: newMonth,
           salary: newSalary,
           expenses: newExpenses,
           fixedExpenses: newFixedExpenses,
         }),
       })
-      if (!response.ok) {
-        throw new Error("Erreur lors de la sauvegarde des données")
-      }
+      if (!response.ok) throw new Error("Erreur sauvegarde")
+      
       await fetchAllMonths()
       return true
     } catch (error) {
-      console.error(error)
-      toast({
-        title: "Erreur",
-        description: "Impossible de sauvegarder les données.",
-        variant: "destructive",
-      })
+      toast({ title: "Erreur", description: "Impossible de sauvegarder.", variant: "destructive" })
       return false
     } finally {
       setIsLoading(false)
@@ -231,7 +245,7 @@ export default function ExpenseTracker() {
   }
 
   // =========================
-  // 5. Gérer la création d'un nouveau mois
+  // 5. Création mois
   // =========================
   const [newMonthInput, setNewMonthInput] = useState("")
   const [newMonthSalary, setNewMonthSalary] = useState("")
@@ -253,26 +267,21 @@ export default function ExpenseTracker() {
       body: JSON.stringify(monthData),
     })
     if (response.ok) {
-      toast({ title: `Mois ${newMonthInput} créé pour ${currentUser} !` })
+      toast({ title: "Mois créé !" })
       await fetchAllMonths()
       setNewMonthInput("")
       setNewMonthSalary("")
     } else {
-      toast({
-        title: "Erreur",
-        description: "Impossible de créer ce mois.",
-        variant: "destructive",
-      })
+      toast({ title: "Erreur", description: "Impossible de créer ce mois.", variant: "destructive" })
     }
   }
 
   // =========================
-  // 6. Ajout d'une dépense
+  // 6 à 10. CRUD Dépenses
   // =========================
   async function addExpense(e: FormEvent) {
     e.preventDefault()
     if (!amount || !description) return
-
     const newExpense: Expense = {
       id: Date.now().toString(),
       amount: Number.parseFloat(amount),
@@ -280,65 +289,44 @@ export default function ExpenseTracker() {
       category,
       date: new Date().toISOString().split("T")[0],
     }
-
     const newExpenses = [newExpense, ...expenses]
     const success = await saveData(newExpenses, fixedExpenses)
     if (success) {
       setExpenses(newExpenses)
-      setAmount("")
-      setDescription("")
-      setCategory("alimentation")
+      setAmount(""); setDescription(""); setCategory("alimentation");
       toast({ title: "Dépense ajoutée" })
     }
   }
 
-  // =========================
-  // 7. Ajout d'une charge fixe
-  // =========================
   async function addFixedExpense(e: FormEvent) {
     e.preventDefault()
     if (!fixedAmount || !fixedDescription) return
-
     const newFixedExpense: FixedExpense = {
       id: Date.now().toString(),
       amount: Number.parseFloat(fixedAmount),
       description: fixedDescription,
     }
-
     const newFixedExpenses = [...fixedExpenses, newFixedExpense]
     const success = await saveData(expenses, newFixedExpenses)
     if (success) {
       setFixedExpenses(newFixedExpenses)
-      setFixedAmount("")
-      setFixedDescription("")
+      setFixedAmount(""); setFixedDescription("");
       toast({ title: "Charge fixe ajoutée" })
     }
   }
 
-  // =========================
-  // 8 & 9. Suppressions
-  // =========================
   async function deleteExpense(id: string) {
     const newExpenses = expenses.filter((exp) => exp.id !== id)
     const success = await saveData(newExpenses, fixedExpenses)
-    if (success) {
-      setExpenses(newExpenses)
-      toast({ title: "Dépense supprimée" })
-    }
+    if (success) { setExpenses(newExpenses); toast({ title: "Supprimé" }) }
   }
 
   async function deleteFixedExpense(id: string) {
     const newFixedExpenses = fixedExpenses.filter((exp) => exp.id !== id)
     const success = await saveData(expenses, newFixedExpenses)
-    if (success) {
-      setFixedExpenses(newFixedExpenses)
-      toast({ title: "Charge fixe supprimée" })
-    }
+    if (success) { setFixedExpenses(newFixedExpenses); toast({ title: "Supprimé" }) }
   }
 
-  // =========================
-  // 10. Edition Charge Fixe
-  // =========================
   function startEditFixedExpense(expense: FixedExpense) {
     setEditingFixedExpense(expense)
     setFixedAmount(expense.amount.toString())
@@ -356,11 +344,8 @@ export default function ExpenseTracker() {
     const success = await saveData(expenses, updatedFixed)
     if (success) {
       setFixedExpenses(updatedFixed)
-      setEditingFixedExpense(null)
-      setFixedAmount("")
-      setFixedDescription("")
-      setIsExceptional(false)
-      toast({ title: "Charge fixe modifiée" })
+      setEditingFixedExpense(null); setFixedAmount(""); setFixedDescription(""); setIsExceptional(false);
+      toast({ title: "Modifié" })
       return true
     }
     return false
@@ -371,9 +356,8 @@ export default function ExpenseTracker() {
   // =========================
   const totalExpenses = expenses.reduce((sum, exp) => sum + exp.amount, 0)
   const totalFixedExpenses = fixedExpenses.reduce((sum, exp) => sum + exp.amount, 0)
-  const totalAll = totalExpenses + totalFixedExpenses
   const numericSalary = parseFloat(salary) || 0
-  const balance = numericSalary - totalAll
+  const balance = numericSalary - (totalExpenses + totalFixedExpenses)
 
   const filteredExpenses = selectedCategory
     ? expenses.filter((exp) => exp.category === selectedCategory)
@@ -384,6 +368,7 @@ export default function ExpenseTracker() {
     return acc
   }, {} as Record<string, number>)
 
+
   // =========================
   // RENDU : ECRAN DE CONNEXION
   // =========================
@@ -392,25 +377,45 @@ export default function ExpenseTracker() {
       <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
         <Card className="w-full max-w-md shadow-lg">
           <CardHeader>
-            <CardTitle className="text-center text-2xl">Bienvenue</CardTitle>
+            <CardTitle className="text-center text-2xl">Connexion</CardTitle>
             <CardDescription className="text-center">
-              Qui utilise l'application aujourd'hui ?
+              Entrez votre pseudo et mot de passe.<br/>
+              <span className="text-xs text-muted-foreground">(Si le compte n'existe pas, il sera créé automatiquement)</span>
             </CardDescription>
           </CardHeader>
           <CardContent>
             <form onSubmit={handleLogin} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="username">Nom d'utilisateur</Label>
-                <Input
-                  id="username"
-                  placeholder="Ex: Alex"
-                  value={usernameInput}
-                  onChange={(e) => setUsernameInput(e.target.value)}
-                  className="text-lg"
-                />
+                <div className="relative">
+                  <User className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                  <Input
+                    id="username"
+                    placeholder="Ex: Alex"
+                    value={usernameInput}
+                    onChange={(e) => setUsernameInput(e.target.value)}
+                    className="pl-10"
+                    disabled={isLoggingIn}
+                  />
+                </div>
               </div>
-              <Button type="submit" className="w-full h-12 text-lg">
-                Accéder à mes comptes <User className="ml-2 h-5 w-5" />
+              <div className="space-y-2">
+                <Label htmlFor="password">Mot de passe</Label>
+                <div className="relative">
+                    <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
+                    <Input
+                        id="password"
+                        type="password"
+                        placeholder="••••••••"
+                        value={passwordInput}
+                        onChange={(e) => setPasswordInput(e.target.value)}
+                        className="pl-10"
+                        disabled={isLoggingIn}
+                    />
+                </div>
+              </div>
+              <Button type="submit" className="w-full h-10" disabled={isLoggingIn}>
+                {isLoggingIn ? "Vérification..." : "Accéder à mes comptes"}
               </Button>
             </form>
           </CardContent>
@@ -427,16 +432,16 @@ export default function ExpenseTracker() {
       {/* Header User */}
       <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-lg shadow-sm border">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary font-bold">
-            {currentUser.charAt(0).toUpperCase()}
+          <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary font-bold uppercase">
+            {currentUser.charAt(0)}
           </div>
           <div>
-            <p className="text-sm text-muted-foreground">Bonjour,</p>
+            <p className="text-sm text-muted-foreground">Utilisateur</p>
             <p className="font-bold text-lg">{currentUser}</p>
           </div>
         </div>
         <Button variant="outline" size="sm" onClick={handleLogout}>
-          <LogOut className="mr-2 h-4 w-4" /> Changer
+          <LogOut className="mr-2 h-4 w-4" /> Déconnexion
         </Button>
       </div>
 
@@ -447,7 +452,7 @@ export default function ExpenseTracker() {
         <CardHeader>
           <CardTitle>Gestion des mois</CardTitle>
           <CardDescription>
-            Gérez vos mois personnels ({currentUser})
+            Gérez vos mois personnels
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -457,9 +462,7 @@ export default function ExpenseTracker() {
               <Label>Mois disponible :</Label>
               <div className="flex items-center gap-2">
                 <Select
-                  onValueChange={(val) => {
-                    fetchMonthData(val)
-                  }}
+                  onValueChange={fetchMonthData}
                   value={month}
                 >
                   <SelectTrigger className="w-[200px] mt-1">
@@ -482,19 +485,16 @@ export default function ExpenseTracker() {
                     variant="destructive"
                     size="icon"
                     onClick={async () => {
-                      if (confirm(`Supprimer le mois ${month} pour ${currentUser} ?`)) {
+                      if (confirm(`Supprimer le mois ${month} ?`)) {
                         const res = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, {
                           method: "DELETE",
                         })
                         if (res.ok) {
                           toast({ title: `Mois ${month} supprimé` })
-                          setMonth("")
-                          setSalary("")
-                          setExpenses([])
-                          setFixedExpenses([])
+                          setMonth(""); setSalary(""); setExpenses([]); setFixedExpenses([]);
                           fetchAllMonths()
                         } else {
-                          toast({ title: "Erreur", description: "Impossible de supprimer", variant: "destructive" })
+                          toast({ title: "Erreur suppression", variant: "destructive" })
                         }
                       }
                     }}
@@ -534,7 +534,7 @@ export default function ExpenseTracker() {
         </CardContent>
       </Card>
 
-      {/* Si aucun mois n'est chargé, on arrête là */}
+      {/* Si aucun mois n'est chargé */}
       {month === "" ? (
         <p className="text-center text-muted-foreground py-10">
           Sélectionnez un mois ci-dessus pour commencer
@@ -550,23 +550,18 @@ export default function ExpenseTracker() {
 
           {/* === Dashboard === */}
           <TabsContent value="dashboard">
-            {/* GRILLE PRINCIPALE DES CHIFFRES */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-              
-              {/* NOUVELLE CARTE : REVENU / SALAIRE */}
               <Card className="bg-green-50 border-green-200">
                  <CardHeader className="pb-2">
                    <CardTitle className="text-sm font-medium text-green-700 flex items-center gap-2">
-                     <Wallet className="h-4 w-4" /> Revenus (Salaire)
+                     <Wallet className="h-4 w-4" /> Revenus
                    </CardTitle>
                  </CardHeader>
                  <CardContent>
                    <p className="text-2xl font-bold text-green-800">{numericSalary.toFixed(2)} €</p>
-                   <p className="text-xs text-green-600">Pour {month}</p>
                  </CardContent>
               </Card>
 
-              {/* Dépenses Variables */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Dépenses Variables</CardTitle>
@@ -576,7 +571,6 @@ export default function ExpenseTracker() {
                 </CardContent>
               </Card>
 
-              {/* Charges Fixes */}
               <Card>
                 <CardHeader className="pb-2">
                   <CardTitle className="text-sm font-medium text-muted-foreground">Charges Fixes</CardTitle>
@@ -586,7 +580,6 @@ export default function ExpenseTracker() {
                 </CardContent>
               </Card>
 
-              {/* Bilan */}
               <Card className={`${balance >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
                 <CardHeader className="pb-2">
                   <CardTitle className={`text-sm font-medium ${balance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
@@ -602,7 +595,6 @@ export default function ExpenseTracker() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-               {/* Carte modification Salaire (déplacée ici pour être moins centrale) */}
                <Card>
                 <CardHeader>
                   <CardTitle>Ajustements</CardTitle>
@@ -632,10 +624,9 @@ export default function ExpenseTracker() {
                 </CardContent>
               </Card>
 
-              {/* Répartition */}
               <Card className="md:col-span-2">
                 <CardHeader>
-                  <CardTitle>Répartition par catégorie</CardTitle>
+                  <CardTitle>Répartition</CardTitle>
                 </CardHeader>
                 <CardContent>
                   {Object.entries(expensesByCategory).length > 0 ? (
@@ -643,7 +634,6 @@ export default function ExpenseTracker() {
                       {Object.entries(expensesByCategory).map(([cat, amount]) => {
                         const categoryName = categories.find((c) => c.id === cat)?.name || cat
                         const percentage = (amount / totalExpenses) * 100 || 0
-
                         return (
                           <div key={cat} className="space-y-1">
                             <div className="flex justify-between text-sm">
@@ -651,50 +641,19 @@ export default function ExpenseTracker() {
                               <span>{amount.toFixed(2)} € ({percentage.toFixed(1)}%)</span>
                             </div>
                             <div className="w-full bg-gray-100 rounded-full h-2">
-                              <div
-                                className="bg-primary h-2 rounded-full"
-                                style={{ width: `${percentage}%` }}
-                              />
+                              <div className="bg-primary h-2 rounded-full" style={{ width: `${percentage}%` }} />
                             </div>
                           </div>
                         )
                       })}
                     </div>
-                  ) : (
-                    <p className="text-muted-foreground text-sm">Aucune dépense enregistrée</p>
-                  )}
+                  ) : <p className="text-muted-foreground text-sm">Rien à afficher</p>}
                 </CardContent>
               </Card>
             </div>
-            
-            {/* Dernières dépenses */}
-            <Card className="mt-6">
-                <CardHeader>
-                  <CardTitle>Dernières dépenses</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {expenses.length > 0 ? (
-                    <div className="space-y-4">
-                      {expenses.slice(0, 5).map((expense) => (
-                        <div key={expense.id} className="flex justify-between items-center border-b pb-2 last:border-0 last:pb-0">
-                          <div>
-                            <p className="font-medium">{expense.description}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {categories.find((c) => c.id === expense.category)?.name} • {expense.date}
-                            </p>
-                          </div>
-                          <p className="font-semibold text-sm">{expense.amount.toFixed(2)} €</p>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="text-muted-foreground text-sm">Aucune dépense enregistrée</p>
-                  )}
-                </CardContent>
-              </Card>
           </TabsContent>
 
-          {/* === Expenses Tab (Code identique, juste structurellement propre) === */}
+          {/* === Expenses Tab === */}
           <TabsContent value="expenses">
             <Card>
               <CardHeader>
@@ -766,7 +725,7 @@ export default function ExpenseTracker() {
             </Card>
           </TabsContent>
 
-          {/* === Fixed Tab (Code identique) === */}
+          {/* === Fixed Tab === */}
           <TabsContent value="fixed">
             <Card>
               <CardHeader>
@@ -907,7 +866,7 @@ export default function ExpenseTracker() {
             </Card>
           </TabsContent>
 
-          {/* === Add Tab (Code identique) === */}
+          {/* === Add Tab === */}
           <TabsContent value="add">
             <Card>
               <CardHeader>
