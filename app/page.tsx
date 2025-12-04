@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, FormEvent } from "react"
-import { Plus, Edit, Trash2 } from "lucide-react"
+import { Plus, Edit, Trash2, User, LogOut, Wallet } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -41,6 +41,7 @@ type FixedExpense = {
 }
 
 type MonthData = {
+  user?: string // Ajout du champ user
   month: string
   salary: number
   expenses: Expense[]
@@ -53,6 +54,10 @@ type AllData = {
 }
 
 export default function ExpenseTracker() {
+  // === STATE UTILISATEUR ===
+  const [currentUser, setCurrentUser] = useState<string | null>(null)
+  const [usernameInput, setUsernameInput] = useState("")
+
   // NEW: liste de tous les mois disponibles
   const [allMonths, setAllMonths] = useState<string[]>([])
 
@@ -93,24 +98,45 @@ export default function ExpenseTracker() {
   ]
 
   // =========================
-  // 1. Charger la liste de tous les mois
+  // 0. Gestion Utilisateur
+  // =========================
+  function handleLogin(e: FormEvent) {
+    e.preventDefault()
+    if (usernameInput.trim()) {
+      setCurrentUser(usernameInput.trim())
+      // On reset les données locales pour éviter d'afficher les données de l'ancien user
+      setMonth("")
+      setSalary("")
+      setExpenses([])
+      setFixedExpenses([])
+    }
+  }
+
+  function handleLogout() {
+    setCurrentUser(null)
+    setAllMonths([])
+    setMonth("")
+  }
+
+  // =========================
+  // 1. Charger la liste de tous les mois (POUR L'USER COURANT)
   // =========================
   async function fetchAllMonths() {
+    if (!currentUser) return // Sécurité
+
     try {
       setIsLoading(true)
-      const res = await fetch("/api/expenses") // sans paramètre → AllData
+      // On passe l'utilisateur en paramètre GET
+      const res = await fetch(`/api/expenses?user=${currentUser}`)
       if (!res.ok) throw new Error("Erreur lors du chargement de la liste des mois")
 
       const data: AllData = await res.json()
+      // On suppose que l'API renvoie { months: [...] } filtré pour cet user
       const monthsList = data.months.map((m) => m.month)
       setAllMonths(monthsList)
     } catch (error) {
       console.error(error)
-      toast({
-        title: "Erreur",
-        description: "Impossible de charger la liste des mois.",
-        variant: "destructive",
-      })
+      // Si c'est le premier login de cet user, ce n'est pas grave d'avoir une erreur ou liste vide
     } finally {
       setIsLoading(false)
     }
@@ -120,9 +146,11 @@ export default function ExpenseTracker() {
   // 2. Charger un mois précis
   // =========================
   async function fetchMonthData(selectedMonth: string) {
+    if (!currentUser) return
+
     try {
       setIsLoading(true)
-      const res = await fetch(`/api/expenses?month=${selectedMonth}`)
+      const res = await fetch(`/api/expenses?month=${selectedMonth}&user=${currentUser}`)
       if (!res.ok) {
         throw new Error("Mois introuvable")
       }
@@ -139,7 +167,6 @@ export default function ExpenseTracker() {
         description: `Impossible de charger le mois ${selectedMonth}`,
         variant: "destructive",
       })
-      // On réinitialise si échec
       setMonth("")
       setSalary("")
       setExpenses([])
@@ -150,11 +177,13 @@ export default function ExpenseTracker() {
   }
 
   // =========================
-  // 3. Au chargement, récupérer la liste de tous les mois
+  // 3. Au changement d'utilisateur, charger ses mois
   // =========================
   useEffect(() => {
-    fetchAllMonths()
-  }, [])
+    if (currentUser) {
+      fetchAllMonths()
+    }
+  }, [currentUser])
 
   // =========================
   // 4. saveData: POST (ajout / maj du mois)
@@ -165,8 +194,8 @@ export default function ExpenseTracker() {
     newMonth: string = month,
     newSalary: number = parseFloat(salary)
   ) {
-    if (!newMonth) {
-      toast({ title: "Choisissez un mois", variant: "destructive" })
+    if (!newMonth || !currentUser) {
+      toast({ title: "Erreur", description: "Données manquantes", variant: "destructive" })
       return false
     }
 
@@ -176,6 +205,7 @@ export default function ExpenseTracker() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          user: currentUser, // On envoie l'utilisateur
           month: newMonth,
           salary: newSalary,
           expenses: newExpenses,
@@ -185,7 +215,6 @@ export default function ExpenseTracker() {
       if (!response.ok) {
         throw new Error("Erreur lors de la sauvegarde des données")
       }
-      // Mise à jour de la liste des mois si besoin
       await fetchAllMonths()
       return true
     } catch (error) {
@@ -209,9 +238,10 @@ export default function ExpenseTracker() {
 
   async function createNewMonth(e: FormEvent) {
     e.preventDefault()
-    if (!newMonthInput || !newMonthSalary) return
+    if (!newMonthInput || !newMonthSalary || !currentUser) return
 
     const monthData: MonthData = {
+      user: currentUser,
       month: newMonthInput,
       salary: parseFloat(newMonthSalary),
       expenses: [],
@@ -223,8 +253,7 @@ export default function ExpenseTracker() {
       body: JSON.stringify(monthData),
     })
     if (response.ok) {
-      toast({ title: `Mois ${newMonthInput} créé !` })
-      // Refresh la liste des mois et sélectionne ce nouveau mois
+      toast({ title: `Mois ${newMonthInput} créé pour ${currentUser} !` })
       await fetchAllMonths()
       setNewMonthInput("")
       setNewMonthSalary("")
@@ -259,11 +288,7 @@ export default function ExpenseTracker() {
       setAmount("")
       setDescription("")
       setCategory("alimentation")
-
-      toast({
-        title: "Dépense ajoutée",
-        description: "Votre dépense a été enregistrée avec succès.",
-      })
+      toast({ title: "Dépense ajoutée" })
     }
   }
 
@@ -286,15 +311,12 @@ export default function ExpenseTracker() {
       setFixedExpenses(newFixedExpenses)
       setFixedAmount("")
       setFixedDescription("")
-      toast({
-        title: "Charge fixe ajoutée",
-        description: "Votre charge fixe a été enregistrée avec succès.",
-      })
+      toast({ title: "Charge fixe ajoutée" })
     }
   }
 
   // =========================
-  // 8. Suppression d'une dépense
+  // 8 & 9. Suppressions
   // =========================
   async function deleteExpense(id: string) {
     const newExpenses = expenses.filter((exp) => exp.id !== id)
@@ -305,9 +327,6 @@ export default function ExpenseTracker() {
     }
   }
 
-  // =========================
-  // 9. Suppression d'une charge fixe
-  // =========================
   async function deleteFixedExpense(id: string) {
     const newFixedExpenses = fixedExpenses.filter((exp) => exp.id !== id)
     const success = await saveData(expenses, newFixedExpenses)
@@ -318,7 +337,7 @@ export default function ExpenseTracker() {
   }
 
   // =========================
-  // 10. Edition d'une charge fixe
+  // 10. Edition Charge Fixe
   // =========================
   function startEditFixedExpense(expense: FixedExpense) {
     setEditingFixedExpense(expense)
@@ -329,7 +348,6 @@ export default function ExpenseTracker() {
 
   async function saveEditFixedExpense() {
     if (!editingFixedExpense || !fixedAmount || !fixedDescription) return false
-
     const updatedFixed = fixedExpenses.map((exp) =>
       exp.id === editingFixedExpense.id
         ? { ...exp, amount: parseFloat(fixedAmount), description: fixedDescription, isExceptional }
@@ -357,125 +375,169 @@ export default function ExpenseTracker() {
   const numericSalary = parseFloat(salary) || 0
   const balance = numericSalary - totalAll
 
-  // Filtrer par catégorie
   const filteredExpenses = selectedCategory
     ? expenses.filter((exp) => exp.category === selectedCategory)
     : expenses
 
-  // Répartition par catégorie
   const expensesByCategory = expenses.reduce((acc, exp) => {
     acc[exp.category] = (acc[exp.category] || 0) + exp.amount
     return acc
   }, {} as Record<string, number>)
 
   // =========================
-  // Rendu
+  // RENDU : ECRAN DE CONNEXION
+  // =========================
+  if (!currentUser) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-slate-50 p-4">
+        <Card className="w-full max-w-md shadow-lg">
+          <CardHeader>
+            <CardTitle className="text-center text-2xl">Bienvenue</CardTitle>
+            <CardDescription className="text-center">
+              Qui utilise l'application aujourd'hui ?
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleLogin} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="username">Nom d'utilisateur</Label>
+                <Input
+                  id="username"
+                  placeholder="Ex: Alex"
+                  value={usernameInput}
+                  onChange={(e) => setUsernameInput(e.target.value)}
+                  className="text-lg"
+                />
+              </div>
+              <Button type="submit" className="w-full h-12 text-lg">
+                Accéder à mes comptes <User className="ml-2 h-5 w-5" />
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // =========================
+  // RENDU : APPLICATION PRINCIPALE
   // =========================
   return (
-    <div className="container mx-auto py-8 px-4">
-      <h1 className="text-3xl font-bold mb-6 text-center">Suivi des Dépenses (Multi-mois)</h1>
+    <div className="container mx-auto py-8 px-4 relative">
+      {/* Header User */}
+      <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-lg shadow-sm border">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 bg-primary/10 rounded-full flex items-center justify-center text-primary font-bold">
+            {currentUser.charAt(0).toUpperCase()}
+          </div>
+          <div>
+            <p className="text-sm text-muted-foreground">Bonjour,</p>
+            <p className="font-bold text-lg">{currentUser}</p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" onClick={handleLogout}>
+          <LogOut className="mr-2 h-4 w-4" /> Changer
+        </Button>
+      </div>
+
+      <h1 className="text-3xl font-bold mb-6 text-center">Suivi des Dépenses</h1>
 
       {/* === Sélection & création d'un mois === */}
       <Card className="mb-6">
         <CardHeader>
           <CardTitle>Gestion des mois</CardTitle>
           <CardDescription>
-            Sélectionner un mois existant ou en créer un nouveau
+            Gérez vos mois personnels ({currentUser})
           </CardDescription>
         </CardHeader>
         <CardContent>
-  <div className="flex flex-col md:flex-row gap-4">
-    {/* Sélection d'un mois existant */}
-    <div>
-      <Label>Mois disponible :</Label>
-      <div className="flex items-center gap-2">
-        <Select
-          onValueChange={(val) => {
-            fetchMonthData(val)
-          }}
-        >
-          <SelectTrigger className="w-[200px] mt-1">
-            <SelectValue placeholder="Choisir un mois" />
-          </SelectTrigger>
-          <SelectContent>
-            {allMonths.length === 0 && (
-              <SelectItem value="all" disabled>Aucun mois</SelectItem>
-            )}
-            {allMonths.map((m) => (
-              <SelectItem key={m} value={m}>
-                {m}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+          <div className="flex flex-col md:flex-row gap-4">
+            {/* Sélection d'un mois existant */}
+            <div>
+              <Label>Mois disponible :</Label>
+              <div className="flex items-center gap-2">
+                <Select
+                  onValueChange={(val) => {
+                    fetchMonthData(val)
+                  }}
+                  value={month}
+                >
+                  <SelectTrigger className="w-[200px] mt-1">
+                    <SelectValue placeholder="Choisir un mois" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {allMonths.length === 0 && (
+                      <SelectItem value="none" disabled>Aucun mois trouvé</SelectItem>
+                    )}
+                    {allMonths.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
 
-        {/* Bouton supprimer à côté */}
-        {month && (
-            <Button
-            variant="destructive"
-            size="icon"
-            onClick={async () => {
-              if (confirm(`Supprimer le mois ${month} ?`)) {
-              const res = await fetch(`/api/expenses?month=${month}`, {
-                method: "DELETE",
-              })
-              if (res.ok) {
-                toast({ title: `Mois ${month} supprimé` })
-                setMonth("")
-                setSalary("")
-                setExpenses([])
-                setFixedExpenses([])
-                fetchAllMonths()
-              } else {
-                toast({
-                title: "Erreur",
-                description: "Impossible de supprimer ce mois",
-                variant: "destructive",
-                })
-              }
-              }
-            }}
-            >
-            <Trash2 className="h-4 w-4" />
-            </Button>
-        )}
-      </div>
-    </div>
+                {month && (
+                  <Button
+                    variant="destructive"
+                    size="icon"
+                    onClick={async () => {
+                      if (confirm(`Supprimer le mois ${month} pour ${currentUser} ?`)) {
+                        const res = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, {
+                          method: "DELETE",
+                        })
+                        if (res.ok) {
+                          toast({ title: `Mois ${month} supprimé` })
+                          setMonth("")
+                          setSalary("")
+                          setExpenses([])
+                          setFixedExpenses([])
+                          fetchAllMonths()
+                        } else {
+                          toast({ title: "Erreur", description: "Impossible de supprimer", variant: "destructive" })
+                        }
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+            </div>
 
-    {/* Création d'un nouveau mois */}
-    <form onSubmit={createNewMonth} className="flex flex-col md:flex-row gap-2 items-end">
-      <div>
-        <Label htmlFor="newMonthInput">Nouveau mois (YYYY-MM)</Label>
-        <Input
-          id="newMonthInput"
-          placeholder="2025-05"
-          value={newMonthInput}
-          onChange={(e) => setNewMonthInput(e.target.value)}
-        />
-      </div>
-      <div>
-        <Label htmlFor="newMonthSalary">Salaire (€)</Label>
-        <Input
-          id="newMonthSalary"
-          type="number"
-          placeholder="2000"
-          value={newMonthSalary}
-          onChange={(e) => setNewMonthSalary(e.target.value)}
-        />
-      </div>
-      <Button type="submit" className="mt-4 md:mt-6">
-        Créer
-      </Button>
-    </form>
-  </div>
-</CardContent>
-
+            {/* Création d'un nouveau mois */}
+            <form onSubmit={createNewMonth} className="flex flex-col md:flex-row gap-2 items-end flex-1 justify-end">
+              <div>
+                <Label htmlFor="newMonthInput">Nouveau mois</Label>
+                <Input
+                  id="newMonthInput"
+                  placeholder="2025-05"
+                  value={newMonthInput}
+                  onChange={(e) => setNewMonthInput(e.target.value)}
+                  className="w-32"
+                />
+              </div>
+              <div>
+                <Label htmlFor="newMonthSalary">Salaire</Label>
+                <Input
+                  id="newMonthSalary"
+                  type="number"
+                  placeholder="2000"
+                  value={newMonthSalary}
+                  onChange={(e) => setNewMonthSalary(e.target.value)}
+                  className="w-24"
+                />
+              </div>
+              <Button type="submit">Créer</Button>
+            </form>
+          </div>
+        </CardContent>
       </Card>
 
       {/* Si aucun mois n'est chargé, on arrête là */}
       {month === "" ? (
-        <p className="text-center text-muted-foreground">
-          Sélectionnez un mois pour afficher ou modifier ses dépenses
+        <p className="text-center text-muted-foreground py-10">
+          Sélectionnez un mois ci-dessus pour commencer
         </p>
       ) : (
         <Tabs defaultValue="dashboard" className="w-full">
@@ -488,86 +550,90 @@ export default function ExpenseTracker() {
 
           {/* === Dashboard === */}
           <TabsContent value="dashboard">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-              {/* Salaire & Paramètres du mois */}
-              <Card>
-                <CardHeader>
-                  <CardTitle>Paramètres du mois</CardTitle>
-                  <CardDescription>Modifier salaire & mois</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <form
-                    onSubmit={async (e) => {
-                      e.preventDefault()
-                      const success = await saveData(expenses, fixedExpenses, month, parseFloat(salary))
-                      if (success) {
-                        toast({ title: "Paramètres mis à jour" })
-                      }
-                    }}
-                    className="space-y-4"
-                  >
-                    <div>
-                      <Label htmlFor="month">Mois (YYYY-MM)</Label>
-                      <Input
-                        id="month"
-                        value={month}
-                        onChange={(e) => setMonth(e.target.value)}
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="salary">Salaire (€)</Label>
-                      <Input
-                        id="salary"
-                        type="number"
-                        step="0.01"
-                        value={salary}
-                        onChange={(e) => setSalary(e.target.value)}
-                      />
-                    </div>
-                    <Button type="submit">Enregistrer</Button>
-                  </form>
-                </CardContent>
+            {/* GRILLE PRINCIPALE DES CHIFFRES */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+              
+              {/* NOUVELLE CARTE : REVENU / SALAIRE */}
+              <Card className="bg-green-50 border-green-200">
+                 <CardHeader className="pb-2">
+                   <CardTitle className="text-sm font-medium text-green-700 flex items-center gap-2">
+                     <Wallet className="h-4 w-4" /> Revenus (Salaire)
+                   </CardTitle>
+                 </CardHeader>
+                 <CardContent>
+                   <p className="text-2xl font-bold text-green-800">{numericSalary.toFixed(2)} €</p>
+                   <p className="text-xs text-green-600">Pour {month}</p>
+                 </CardContent>
               </Card>
 
               {/* Dépenses Variables */}
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle>Dépenses Variables</CardTitle>
-                  <CardDescription>Total</CardDescription>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Dépenses Variables</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-3xl font-bold">{totalExpenses.toFixed(2)} €</p>
+                  <p className="text-2xl font-bold">{totalExpenses.toFixed(2)} €</p>
                 </CardContent>
               </Card>
 
               {/* Charges Fixes */}
               <Card>
                 <CardHeader className="pb-2">
-                  <CardTitle>Charges Fixes</CardTitle>
-                  <CardDescription>Total</CardDescription>
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Charges Fixes</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-3xl font-bold">{totalFixedExpenses.toFixed(2)} €</p>
+                  <p className="text-2xl font-bold">{totalFixedExpenses.toFixed(2)} €</p>
+                </CardContent>
+              </Card>
+
+              {/* Bilan */}
+              <Card className={`${balance >= 0 ? 'bg-blue-50 border-blue-200' : 'bg-red-50 border-red-200'}`}>
+                <CardHeader className="pb-2">
+                  <CardTitle className={`text-sm font-medium ${balance >= 0 ? 'text-blue-700' : 'text-red-700'}`}>
+                    Reste à vivre
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <p className={`text-2xl font-bold ${balance >= 0 ? 'text-blue-800' : 'text-red-800'}`}>
+                    {balance.toFixed(2)} €
+                  </p>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Bilan */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Bilan</CardTitle>
-                <CardDescription>Différence entre Salaire et Dépenses</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <p className="text-2xl font-bold">
-                  Reste : {balance.toFixed(2)} €
-                </p>
-              </CardContent>
-            </Card>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+               {/* Carte modification Salaire (déplacée ici pour être moins centrale) */}
+               <Card>
+                <CardHeader>
+                  <CardTitle>Ajustements</CardTitle>
+                  <CardDescription>Modifier le salaire du mois</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault()
+                      const success = await saveData(expenses, fixedExpenses, month, parseFloat(salary))
+                      if (success) toast({ title: "Salaire mis à jour" })
+                    }}
+                    className="flex gap-2 items-end"
+                  >
+                    <div className="flex-1">
+                      <Label htmlFor="salary-edit">Nouveau montant</Label>
+                      <Input
+                        id="salary-edit"
+                        type="number"
+                        step="0.01"
+                        value={salary}
+                        onChange={(e) => setSalary(e.target.value)}
+                      />
+                    </div>
+                    <Button type="submit" variant="secondary"><Edit className="h-4 w-4" /></Button>
+                  </form>
+                </CardContent>
+              </Card>
 
-            {/* Répartition & dernières dépenses */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-              <Card>
+              {/* Répartition */}
+              <Card className="md:col-span-2">
                 <CardHeader>
                   <CardTitle>Répartition par catégorie</CardTitle>
                 </CardHeader>
@@ -580,15 +646,13 @@ export default function ExpenseTracker() {
 
                         return (
                           <div key={cat} className="space-y-1">
-                            <div className="flex justify-between">
+                            <div className="flex justify-between text-sm">
                               <span>{categoryName}</span>
-                              <span>
-                                {amount.toFixed(2)} € ({percentage.toFixed(1)}%)
-                              </span>
+                              <span>{amount.toFixed(2)} € ({percentage.toFixed(1)}%)</span>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2.5">
+                            <div className="w-full bg-gray-100 rounded-full h-2">
                               <div
-                                className="bg-primary h-2.5 rounded-full"
+                                className="bg-primary h-2 rounded-full"
                                 style={{ width: `${percentage}%` }}
                               />
                             </div>
@@ -597,12 +661,14 @@ export default function ExpenseTracker() {
                       })}
                     </div>
                   ) : (
-                    <p className="text-muted-foreground">Aucune dépense enregistrée</p>
+                    <p className="text-muted-foreground text-sm">Aucune dépense enregistrée</p>
                   )}
                 </CardContent>
               </Card>
-
-              <Card>
+            </div>
+            
+            {/* Dernières dépenses */}
+            <Card className="mt-6">
                 <CardHeader>
                   <CardTitle>Dernières dépenses</CardTitle>
                 </CardHeader>
@@ -610,26 +676,25 @@ export default function ExpenseTracker() {
                   {expenses.length > 0 ? (
                     <div className="space-y-4">
                       {expenses.slice(0, 5).map((expense) => (
-                        <div key={expense.id} className="flex justify-between items-center border-b pb-2">
+                        <div key={expense.id} className="flex justify-between items-center border-b pb-2 last:border-0 last:pb-0">
                           <div>
                             <p className="font-medium">{expense.description}</p>
-                            <p className="text-sm text-muted-foreground">
+                            <p className="text-xs text-muted-foreground">
                               {categories.find((c) => c.id === expense.category)?.name} • {expense.date}
                             </p>
                           </div>
-                          <p className="font-semibold">{expense.amount.toFixed(2)} €</p>
+                          <p className="font-semibold text-sm">{expense.amount.toFixed(2)} €</p>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-muted-foreground">Aucune dépense enregistrée</p>
+                    <p className="text-muted-foreground text-sm">Aucune dépense enregistrée</p>
                   )}
                 </CardContent>
               </Card>
-            </div>
           </TabsContent>
 
-          {/* === Expenses Tab === */}
+          {/* === Expenses Tab (Code identique, juste structurellement propre) === */}
           <TabsContent value="expenses">
             <Card>
               <CardHeader>
@@ -701,7 +766,7 @@ export default function ExpenseTracker() {
             </Card>
           </TabsContent>
 
-          {/* === Fixed Tab === */}
+          {/* === Fixed Tab (Code identique) === */}
           <TabsContent value="fixed">
             <Card>
               <CardHeader>
@@ -778,7 +843,7 @@ export default function ExpenseTracker() {
                                   onClick={async (event) => {
                                     const success = await saveEditFixedExpense()
                                     if (!success) {
-                                      event.preventDefault() // Empêche la fermeture du modal si erreur
+                                      event.preventDefault()
                                     }
                                   }}
                                 >
@@ -842,7 +907,7 @@ export default function ExpenseTracker() {
             </Card>
           </TabsContent>
 
-          {/* === Add Tab === */}
+          {/* === Add Tab (Code identique) === */}
           <TabsContent value="add">
             <Card>
               <CardHeader>
