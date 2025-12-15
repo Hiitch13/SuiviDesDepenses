@@ -1,11 +1,6 @@
 import { NextResponse } from "next/server";
 
 // === Types ===
-type User = {
-  username: string;
-  password: string; // En prod, il faudrait hacher ce mdp (bcrypt), mais ok pour ce projet perso
-};
-
 type FixedExpense = {
   id: string;
   amount: number;
@@ -21,6 +16,13 @@ type Expense = {
   date: string;
 };
 
+type User = {
+  username: string;
+  password: string;
+  // NOUVEAU : Chaque utilisateur a ses propres charges par défaut
+  defaultFixedExpenses?: FixedExpense[]; 
+};
+
 type MonthData = {
   user: string;
   month: string;
@@ -31,8 +33,9 @@ type MonthData = {
 
 // Structure globale du JSON
 type AllData = {
-  users: User[]; // <--- NOUVEAU : Liste des utilisateurs
-  defaultFixedExpenses: FixedExpense[];
+  users: User[]; 
+  // On garde ça pour la rétrocompatibilité, mais on ne s'en servira plus vraiment
+  defaultFixedExpenses: FixedExpense[]; 
   months: MonthData[];
 };
 
@@ -52,7 +55,7 @@ async function getAllData(): Promise<AllData> {
   const json = await response.json();
   const record = json.record as AllData;
 
-  // Initialiser le tableau users s'il n'existe pas encore
+  // Initialiser le tableau users s'il n'existe pas
   if (!record.users) record.users = [];
   return record;
 }
@@ -75,14 +78,13 @@ export async function GET(request: Request) {
     const monthParam = searchParams.get("month");
     const userParam = searchParams.get("user");
 
-    // Sécurité : on exige un user pour voir des données
     if (!userParam) {
-      return NextResponse.json({ error: "Utilisateur non spécifié" }, { status: 400 });
+      return NextResponse.json({ error: "Utilisateur requis" }, { status: 400 });
     }
 
     const allData = await getAllData();
 
-    // Vérifier si l'utilisateur existe (optionnel, mais propre)
+    // Vérifier user
     const userExists = allData.users.some(u => u.username === userParam);
     if (!userExists) {
         return NextResponse.json({ error: "Utilisateur inconnu" }, { status: 404 });
@@ -96,62 +98,74 @@ export async function GET(request: Request) {
       return NextResponse.json(foundMonth);
     }
 
-    // Filtrer les mois pour cet utilisateur
     const userMonths = allData.months.filter((m) => m.user === userParam);
-
     return NextResponse.json({ ...allData, months: userMonths });
   } catch (error) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
 
-// === POST (Gère AUTHENTIFICATION + SAUVEGARDE DONNÉES) ===
+// === POST (Auth + Sauvegarde INTELLIGENTE) ===
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     const allData = await getAllData();
 
-    // --- CAS 1 : AUTHENTIFICATION (Connexion / Inscription) ---
-    // Si le body contient "isAuth: true", on gère le login
+    // --- CAS 1 : AUTHENTIFICATION ---
     if (body.isAuth) {
         const { username, password } = body;
-        if (!username || !password) {
-            return NextResponse.json({ error: "Pseudo et mot de passe requis" }, { status: 400 });
-        }
-
         const existingUser = allData.users.find(u => u.username === username);
 
         if (existingUser) {
-            // Utilisateur existe -> Vérification du MDP
             if (existingUser.password === password) {
                 return NextResponse.json({ success: true, message: "Connexion réussie" });
             } else {
                 return NextResponse.json({ error: "Mot de passe incorrect" }, { status: 401 });
             }
         } else {
-            // Utilisateur n'existe pas -> Création (Inscription)
-            allData.users.push({ username, password });
+            // Création compte avec liste vide par défaut
+            allData.users.push({ username, password, defaultFixedExpenses: [] });
             await putAllData(allData);
-            return NextResponse.json({ success: true, message: "Compte créé avec succès" });
+            return NextResponse.json({ success: true, message: "Compte créé" });
         }
     }
 
-    // --- CAS 2 : SAUVEGARDE D'UN MOIS (Code précédent) ---
+    // --- CAS 2 : SAUVEGARDE / CREATION MOIS ---
     const newMonthData = body as MonthData;
+    const currentUserIndex = allData.users.findIndex(u => u.username === newMonthData.user);
     
-    if (!newMonthData.fixedExpenses || newMonthData.fixedExpenses.length === 0) {
-      newMonthData.fixedExpenses = [...allData.defaultFixedExpenses];
+    if (currentUserIndex === -1) {
+        return NextResponse.json({ error: "Utilisateur introuvable pour la sauvegarde" }, { status: 404 });
     }
 
+    // A. INTELLIGENCE : MISE A JOUR DES DEFAUTS UTILISATEUR
+    // Si on sauvegarde un mois qui contient des charges fixes, on met à jour les préférences de l'utilisateur
+    if (newMonthData.fixedExpenses && newMonthData.fixedExpenses.length > 0) {
+        // On ne garde que celles qui ne sont PAS exceptionnelles
+        const recurringExpenses = newMonthData.fixedExpenses.filter(fx => !fx.isExceptional);
+        
+        // On met à jour le profil de l'utilisateur avec cette nouvelle liste "propre"
+        allData.users[currentUserIndex].defaultFixedExpenses = recurringExpenses;
+    }
+
+    // B. CREATION D'UN NOUVEAU MOIS (Remplissage automatique)
+    // Si le mois envoyé n'a pas de charges fixes (c'est une création), on prend les défauts de l'USER
+    if (!newMonthData.fixedExpenses || newMonthData.fixedExpenses.length === 0) {
+        const userDefaults = allData.users[currentUserIndex].defaultFixedExpenses || [];
+        
+        // Si l'user n'a pas encore de défauts, on fallback sur les globaux (optionnel)
+        // ou on laisse vide. Ici je mets les défauts globaux si l'user est vide pour aider au début.
+        if (userDefaults.length === 0 && allData.defaultFixedExpenses) {
+             newMonthData.fixedExpenses = [...allData.defaultFixedExpenses];
+        } else {
+             newMonthData.fixedExpenses = [...userDefaults];
+        }
+    }
+
+    // C. SAUVEGARDE DU MOIS
     const index = allData.months.findIndex(
       (m) => m.month === newMonthData.month && m.user === newMonthData.user
     );
-
-    // Mise à jour des defaults globaux (simple apprentissage)
-    newMonthData.fixedExpenses.forEach((fx) => {
-      const existing = allData.defaultFixedExpenses.find((d) => d.id === fx.id);
-      if (!existing) allData.defaultFixedExpenses.push(fx);
-    });
 
     if (index !== -1) {
       allData.months[index] = newMonthData;
