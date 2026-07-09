@@ -16,11 +16,19 @@ type Expense = {
   date: string;
 };
 
+type Category = {
+  id: string;
+  name: string;
+  color: string;
+};
+
 type User = {
   username: string;
   password: string;
   // NOUVEAU : Chaque utilisateur a ses propres charges par défaut
-  defaultFixedExpenses?: FixedExpense[]; 
+  defaultFixedExpenses?: FixedExpense[];
+  // Catégories personnalisées ajoutées par l'utilisateur
+  customCategories?: Category[];
 };
 
 type MonthData = {
@@ -98,8 +106,13 @@ export async function GET(request: Request) {
       return NextResponse.json(foundMonth);
     }
 
+    const currentUserData = allData.users.find(u => u.username === userParam);
     const userMonths = allData.months.filter((m) => m.user === userParam);
-    return NextResponse.json({ ...allData, months: userMonths });
+    return NextResponse.json({
+      ...allData,
+      months: userMonths,
+      customCategories: currentUserData?.customCategories || [],
+    });
   } catch (error) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
@@ -128,6 +141,20 @@ export async function POST(request: Request) {
             await putAllData(allData);
             return NextResponse.json({ success: true, message: "Compte créé" });
         }
+    }
+
+    // --- CAS 1bis : GESTION DES CATEGORIES PERSONNALISEES ---
+    if (body.isCategoryUpdate) {
+      const { username, customCategories } = body as { username: string; customCategories: Category[] };
+      const idx = allData.users.findIndex(u => u.username === username);
+
+      if (idx === -1) {
+        return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
+      }
+
+      allData.users[idx].customCategories = customCategories;
+      await putAllData(allData);
+      return NextResponse.json({ success: true });
     }
 
     // --- CAS 2 : SAUVEGARDE / CREATION MOIS ---

@@ -96,6 +96,12 @@ type FixedExpense = {
   isExceptional?: boolean
 }
 
+type Category = {
+  id: string
+  name: string
+  color: string
+}
+
 type MonthData = {
   user?: string
   month: string
@@ -106,6 +112,7 @@ type MonthData = {
 
 type AllData = {
   months: MonthData[]
+  customCategories?: Category[]
 }
 
 export default function ExpenseTracker() {
@@ -138,6 +145,11 @@ export default function ExpenseTracker() {
   const [amount, setAmount] = useState("")
   const [description, setDescription] = useState("")
   const [category, setCategory] = useState("alimentation")
+
+  // Catégories personnalisées (ajoutées par l'utilisateur)
+  const [customCategories, setCustomCategories] = useState<Category[]>([])
+  const [newCategoryName, setNewCategoryName] = useState("")
+  const [newCategoryColor, setNewCategoryColor] = useState(COLORS[0])
   
   // Formulaires : Charges Fixes
   const [fixedAmount, setFixedAmount] = useState("")
@@ -152,8 +164,8 @@ export default function ExpenseTracker() {
   const [newMonthInput, setNewMonthInput] = useState("")
   const [newMonthSalary, setNewMonthSalary] = useState("")
 
-  // Configuration des catégories
-  const categories = [
+  // Configuration des catégories (catégories par défaut + catégories personnalisées de l'utilisateur)
+  const defaultCategories: Category[] = [
     { id: "alimentation", name: "Alimentation", color: COLORS[0] },
     { id: "transport", name: "Transport", color: COLORS[1] },
     { id: "loisirs", name: "Loisirs", color: COLORS[2] },
@@ -163,6 +175,7 @@ export default function ExpenseTracker() {
     { id: "epargne", name: "Epargne", color: COLORS[6] },
     { id: "autres", name: "Autres", color: COLORS[7] },
   ]
+  const categories = [...defaultCategories, ...customCategories]
 
   // ==========================================
   // 2. AUTHENTIFICATION
@@ -246,6 +259,7 @@ export default function ExpenseTracker() {
       
       const data: AllData = await res.json()
       setAllMonths(data.months.map((m) => m.month))
+      setCustomCategories(data.customCategories || [])
     } catch (error) { 
       console.error(error) 
     } finally { 
@@ -408,9 +422,73 @@ export default function ExpenseTracker() {
 
   async function deleteExpense(id: string) {
     const newExps = expenses.filter((e) => e.id !== id)
-    if (await saveData(newExps, fixedExpenses)) { 
+    if (await saveData(newExps, fixedExpenses)) {
       setExpenses(newExps)
-      toast({ title: "Dépense supprimée" }) 
+      toast({ title: "Dépense supprimée" })
+    }
+  }
+
+  // ==========================================
+  // 6bis. GESTION DES CATÉGORIES PERSONNALISÉES
+  // ==========================================
+  async function saveCustomCategories(newList: Category[]) {
+    if (!currentUser) return false
+    try {
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isCategoryUpdate: true,
+          username: currentUser,
+          customCategories: newList,
+        }),
+      })
+      return res.ok
+    } catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  async function addCustomCategory(e: FormEvent) {
+    e.preventDefault()
+    if (!newCategoryName.trim()) return
+
+    const id = newCategoryName
+      .trim()
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "")
+
+    if (!id || categories.some((c) => c.id === id)) {
+      toast({ title: "Cette catégorie existe déjà", variant: "destructive" })
+      return
+    }
+
+    const newCat: Category = { id, name: newCategoryName.trim(), color: newCategoryColor }
+    const newList = [...customCategories, newCat]
+
+    if (await saveCustomCategories(newList)) {
+      setCustomCategories(newList)
+      setCategory(id)
+      setNewCategoryName("")
+      setNewCategoryColor(COLORS[0])
+      toast({ title: "Catégorie ajoutée" })
+    } else {
+      toast({ title: "Erreur lors de l'ajout de la catégorie", variant: "destructive" })
+    }
+  }
+
+  async function deleteCustomCategory(id: string) {
+    const newList = customCategories.filter((c) => c.id !== id)
+    if (await saveCustomCategories(newList)) {
+      setCustomCategories(newList)
+      if (category === id) setCategory("alimentation")
+      toast({ title: "Catégorie supprimée" })
+    } else {
+      toast({ title: "Erreur lors de la suppression", variant: "destructive" })
     }
   }
 
@@ -1138,7 +1216,75 @@ export default function ExpenseTracker() {
                                             </div>
                                         </div>
                                         <div className="space-y-2">
-                                            <Label className="text-slate-600">Catégorie</Label>
+                                            <div className="flex items-center justify-between">
+                                                <Label className="text-slate-600">Catégorie</Label>
+                                                <Dialog>
+                                                    <DialogTrigger asChild>
+                                                        <Button type="button" size="icon" variant="ghost" className="h-5 w-5 text-slate-400 hover:text-slate-900">
+                                                          <Plus className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    </DialogTrigger>
+                                                    <DialogContent>
+                                                        <DialogHeader>
+                                                          <DialogTitle>Gérer les catégories</DialogTitle>
+                                                          <DialogDescription>Ajoutez vos propres catégories pour les ajouts rapides.</DialogDescription>
+                                                        </DialogHeader>
+                                                        <form onSubmit={addCustomCategory} className="space-y-4 pt-2">
+                                                            <div className="space-y-2">
+                                                              <Label>Nom de la catégorie</Label>
+                                                              <Input
+                                                                placeholder="Ex: Abonnements"
+                                                                value={newCategoryName}
+                                                                onChange={e => setNewCategoryName(e.target.value)}
+                                                              />
+                                                            </div>
+                                                            <div className="space-y-2">
+                                                              <Label>Couleur</Label>
+                                                              <div className="flex gap-2 flex-wrap">
+                                                                  {COLORS.map(c => (
+                                                                    <button
+                                                                      key={c}
+                                                                      type="button"
+                                                                      onClick={() => setNewCategoryColor(c)}
+                                                                      className="h-7 w-7 rounded-full ring-offset-2 transition-all"
+                                                                      style={{
+                                                                        backgroundColor: c,
+                                                                        boxShadow: newCategoryColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none",
+                                                                      }}
+                                                                    />
+                                                                  ))}
+                                                              </div>
+                                                            </div>
+                                                            <Button type="submit" className="w-full bg-slate-900">Ajouter la catégorie</Button>
+                                                        </form>
+
+                                                        {customCategories.length > 0 && (
+                                                            <div className="pt-4 border-t space-y-2">
+                                                                <Label className="text-slate-500 text-xs uppercase tracking-wide">Vos catégories</Label>
+                                                                <div className="space-y-1 max-h-40 overflow-y-auto">
+                                                                    {customCategories.map(c => (
+                                                                        <div key={c.id} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-slate-50">
+                                                                            <div className="flex items-center gap-2">
+                                                                                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
+                                                                                <span className="text-sm text-slate-700">{c.name}</span>
+                                                                            </div>
+                                                                            <Button
+                                                                              type="button"
+                                                                              size="icon"
+                                                                              variant="ghost"
+                                                                              className="h-7 w-7 text-slate-400 hover:text-red-500"
+                                                                              onClick={() => deleteCustomCategory(c.id)}
+                                                                            >
+                                                                              <Trash2 className="h-3.5 w-3.5" />
+                                                                            </Button>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </DialogContent>
+                                                </Dialog>
+                                            </div>
                                             <Select value={category} onValueChange={setCategory}>
                                                 <SelectTrigger><SelectValue /></SelectTrigger>
                                                 <SelectContent>
