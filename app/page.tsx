@@ -163,6 +163,7 @@ export default function ExpenseTracker() {
   // Formulaire : Nouveau Mois
   const [newMonthInput, setNewMonthInput] = useState("")
   const [newMonthSalary, setNewMonthSalary] = useState("")
+  const [isNewMonthDialogOpen, setIsNewMonthDialogOpen] = useState(false)
 
   // Configuration des catégories (catégories par défaut + catégories personnalisées de l'utilisateur)
   const defaultCategories: Category[] = [
@@ -381,7 +382,8 @@ export default function ExpenseTracker() {
       await fetchAllMonths()
       setNewMonthInput("")
       setNewMonthSalary("")
-    } else { 
+      setIsNewMonthDialogOpen(false)
+    } else {
       toast({ title: "Erreur lors de la création", variant: "destructive" }) 
     }
   }
@@ -744,7 +746,9 @@ export default function ExpenseTracker() {
                 )}
 
                 <Dialog
+                  open={isNewMonthDialogOpen}
                   onOpenChange={(open) => {
+                    setIsNewMonthDialogOpen(open)
                     if (open) {
                       setNewMonthInput(getSuggestedNextMonth())
                       setNewMonthSalary(salary || newMonthSalary)
