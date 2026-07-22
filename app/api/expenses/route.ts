@@ -29,6 +29,8 @@ type User = {
   defaultFixedExpenses?: FixedExpense[];
   // Catégories personnalisées ajoutées par l'utilisateur
   customCategories?: Category[];
+  // Budgets mensuels optionnels par catégorie (clé = id de catégorie)
+  categoryBudgets?: Record<string, number>;
 };
 
 type MonthData = {
@@ -37,6 +39,8 @@ type MonthData = {
   salary: number;
   expenses: Expense[];
   fixedExpenses: FixedExpense[];
+  // Objectif d'épargne du mois (optionnel)
+  savingsGoal?: number;
 };
 
 // Structure globale du JSON
@@ -112,6 +116,7 @@ export async function GET(request: Request) {
       ...allData,
       months: userMonths,
       customCategories: currentUserData?.customCategories || [],
+      categoryBudgets: currentUserData?.categoryBudgets || {},
     });
   } catch (error) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
@@ -153,6 +158,20 @@ export async function POST(request: Request) {
       }
 
       allData.users[idx].customCategories = customCategories;
+      await putAllData(allData);
+      return NextResponse.json({ success: true });
+    }
+
+    // --- CAS 1ter : GESTION DES BUDGETS PAR CATEGORIE ---
+    if (body.isBudgetUpdate) {
+      const { username, categoryBudgets } = body as { username: string; categoryBudgets: Record<string, number> };
+      const idx = allData.users.findIndex(u => u.username === username);
+
+      if (idx === -1) {
+        return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
+      }
+
+      allData.users[idx].categoryBudgets = categoryBudgets;
       await putAllData(allData);
       return NextResponse.json({ success: true });
     }

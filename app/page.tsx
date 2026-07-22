@@ -108,11 +108,13 @@ type MonthData = {
   salary: number
   expenses: Expense[]
   fixedExpenses: FixedExpense[]
+  savingsGoal?: number
 }
 
 type AllData = {
   months: MonthData[]
   customCategories?: Category[]
+  categoryBudgets?: Record<string, number>
 }
 
 export default function ExpenseTracker() {
@@ -150,6 +152,15 @@ export default function ExpenseTracker() {
   const [customCategories, setCustomCategories] = useState<Category[]>([])
   const [newCategoryName, setNewCategoryName] = useState("")
   const [newCategoryColor, setNewCategoryColor] = useState(COLORS[0])
+
+  // Budgets mensuels par catégorie (optionnels)
+  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({})
+
+  // Objectif d'épargne du mois
+  const [savingsGoalInput, setSavingsGoalInput] = useState("0")
+
+  // Bouton flottant d'ajout rapide
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
   
   // Formulaires : Charges Fixes
   const [fixedAmount, setFixedAmount] = useState("")
@@ -219,6 +230,7 @@ export default function ExpenseTracker() {
             setSalary("")
             setExpenses([])
             setFixedExpenses([])
+            setSavingsGoalInput("0")
         } else {
             toast({ 
               title: "Accès refusé", 
@@ -261,6 +273,7 @@ export default function ExpenseTracker() {
       const data: AllData = await res.json()
       setAllMonths(data.months.map((m) => m.month))
       setCustomCategories(data.customCategories || [])
+      setCategoryBudgets(data.categoryBudgets || {})
     } catch (error) { 
       console.error(error) 
     } finally { 
@@ -281,6 +294,7 @@ export default function ExpenseTracker() {
       setSalary(data.salary.toString())
       setExpenses(data.expenses)
       setFixedExpenses(data.fixedExpenses)
+      setSavingsGoalInput((data.savingsGoal ?? 0).toString())
     } catch (error) {
       console.error(error)
       toast({ 
@@ -305,24 +319,26 @@ export default function ExpenseTracker() {
   // 4. SAUVEGARDE (API)
   // ==========================================
   async function saveData(
-    newExpenses: Expense[], 
-    newFixedExpenses: FixedExpense[], 
-    newMonth: string = month, 
-    newSalary: number = parseFloat(salary)
+    newExpenses: Expense[],
+    newFixedExpenses: FixedExpense[],
+    newMonth: string = month,
+    newSalary: number = parseFloat(salary),
+    newSavingsGoal: number = parseFloat(savingsGoalInput)
   ) {
     if (!newMonth || !currentUser) return false
-    
+
     try {
       setIsLoading(true)
       const response = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          user: currentUser, 
-          month: newMonth, 
-          salary: newSalary, 
-          expenses: newExpenses, 
-          fixedExpenses: newFixedExpenses 
+        body: JSON.stringify({
+          user: currentUser,
+          month: newMonth,
+          salary: newSalary,
+          expenses: newExpenses,
+          fixedExpenses: newFixedExpenses,
+          savingsGoal: newSavingsGoal,
         }),
       })
 
@@ -412,27 +428,58 @@ export default function ExpenseTracker() {
   // ==========================================
   // 6. GESTION DES DÉPENSES
   // ==========================================
-  async function addExpense(e: FormEvent) {
-    e.preventDefault()
-    if (!amount) return
+  // Logique partagée entre le formulaire d'ajout, les suggestions rapides et le bouton flottant
+  async function logExpense(expAmount: number, expDescription: string, expCategory: string) {
+    if (!expAmount) return false
 
     const newExp: Expense = {
       id: Date.now().toString(),
-      amount: parseFloat(amount),
-      description: description.trim() || categories.find(c => c.id === category)?.name || "Dépense",
-      category,
+      amount: expAmount,
+      description: expDescription.trim() || categories.find(c => c.id === expCategory)?.name || "Dépense",
+      category: expCategory,
       date: new Date().toISOString().split("T")[0]
     }
 
     const newExps = [newExp, ...expenses]
-    
+
     if (await saveData(newExps, fixedExpenses)) {
       setExpenses(newExps)
+
+      // Le total post-ajout doit venir de newExps (données fraîches), jamais de `expenses`
+      // juste après un setState, dont la mise à jour n'est pas synchrone.
+      const budget = categoryBudgets[expCategory]
+      const categoryTotal = newExps
+        .filter(e => e.category === expCategory)
+        .reduce((sum, e) => sum + e.amount, 0)
+
+      if (budget && categoryTotal > budget) {
+        toast({
+          title: "Budget dépassé",
+          description: `${categories.find(c => c.id === expCategory)?.name}: ${categoryTotal.toFixed(2)}€ / ${budget}€`,
+          variant: "destructive",
+        })
+      } else {
+        toast({ title: "Dépense ajoutée" })
+      }
+      return true
+    }
+    return false
+  }
+
+  async function addExpense(e: FormEvent) {
+    e.preventDefault()
+    if (!amount) return
+
+    if (await logExpense(parseFloat(amount), description, category)) {
       setAmount("")
       setDescription("")
       setCategory("alimentation")
-      toast({ title: "Dépense ajoutée" })
+      setIsQuickAddOpen(false)
     }
+  }
+
+  async function quickLogSuggestion(sugg: { amount: number; description: string; category: string }) {
+    await logExpense(sugg.amount, sugg.description, sugg.category)
   }
 
   async function deleteExpense(id: string) {
@@ -504,6 +551,31 @@ export default function ExpenseTracker() {
       toast({ title: "Catégorie supprimée" })
     } else {
       toast({ title: "Erreur lors de la suppression", variant: "destructive" })
+    }
+  }
+
+  async function saveCategoryBudgets(newBudgets: Record<string, number>) {
+    if (!currentUser) return false
+    try {
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isBudgetUpdate: true,
+          username: currentUser,
+          categoryBudgets: newBudgets,
+        }),
+      })
+      if (res.ok) {
+        toast({ title: "Budgets enregistrés" })
+      } else {
+        toast({ title: "Erreur lors de l'enregistrement des budgets", variant: "destructive" })
+      }
+      return res.ok
+    } catch (error) {
+      console.error(error)
+      toast({ title: "Erreur lors de l'enregistrement des budgets", variant: "destructive" })
+      return false
     }
   }
 
@@ -590,6 +662,56 @@ export default function ExpenseTracker() {
       .reduce((acc, curr) => acc + curr.amount, 0)
     return { name: cat.name, value: val, color: cat.color }
   }).filter(item => item.value > 0)
+
+  // Total dépensé par catégorie ce mois (pour les budgets et les conseils)
+  const categorySpendById: Record<string, number> = {}
+  categories.forEach(cat => {
+    categorySpendById[cat.id] = expenses
+      .filter(e => e.category === cat.id)
+      .reduce((sum, e) => sum + e.amount, 0)
+  })
+
+  // Catégories en dépassement de budget (l'épargne n'est jamais un "dépassement")
+  const overBudgetCategories = categories
+    .filter(cat => cat.id !== "epargne" && categoryBudgets[cat.id] && categorySpendById[cat.id] > categoryBudgets[cat.id])
+    .map(cat => ({ ...cat, spent: categorySpendById[cat.id], budget: categoryBudgets[cat.id] }))
+
+  const hasAnyBudget = categories.some(cat => cat.id !== "epargne" && categoryBudgets[cat.id])
+
+  // Rythme hebdomadaire : uniquement pertinent si le mois affiché est le mois réel en cours
+  const now = new Date()
+  const currentMonthStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}`
+  let weeklyPacing: { isOver: boolean; value: number } | null = null
+  if (month === currentMonthStr) {
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+    const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
+    const daysRemaining = Math.round((lastDayOfMonth.getTime() - today.getTime()) / 86400000) + 1
+    const weeksRemaining = Math.max(1, Math.ceil(daysRemaining / 7))
+    weeklyPacing = balance >= 0
+      ? { isOver: false, value: balance / weeksRemaining }
+      : { isOver: true, value: Math.abs(balance) }
+  }
+
+  // Objectif d'épargne du mois (basé sur la catégorie "epargne" déjà utilisée pour logger l'épargne)
+  const epargneTotal = categorySpendById["epargne"] || 0
+  const savingsGoalNum = parseFloat(savingsGoalInput) || 0
+  const savingsProgress = savingsGoalNum > 0 ? Math.min(100, (epargneTotal / savingsGoalNum) * 100) : 0
+
+  // Suggestions de dépenses fréquentes du mois (top 3, pour un relog en un clic)
+  const expenseFrequency = new Map<string, { amount: number; description: string; category: string; count: number }>()
+  expenses.forEach(e => {
+    const key = `${e.category}|${e.description}|${e.amount}`
+    const existing = expenseFrequency.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      expenseFrequency.set(key, { amount: e.amount, description: e.description, category: e.category, count: 1 })
+    }
+  })
+  const frequentSuggestions = Array.from(expenseFrequency.values())
+    .filter(combo => categories.some(c => c.id === combo.category))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 3)
 
   // ==========================================
   // 9. RENDU : PAGE DE CONNEXION
@@ -902,33 +1024,74 @@ export default function ExpenseTracker() {
                 {/* --- CONTENU ONGLET 1 : VUE D'ENSEMBLE --- */}
                 <TabsContent value="overview" className="space-y-6">
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Bloc : Ajustement Salaire */}
-                        <Card className="shadow-sm border-slate-200">
-                            <CardHeader>
-                              <CardTitle>Ajustement Revenus</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <form 
-                                  onSubmit={async (e) => { 
-                                    e.preventDefault(); 
-                                    if (await saveData(expenses, fixedExpenses, month, parseFloat(salary))) {
-                                      toast({title:"Salaire mis à jour"})
-                                    }
-                                  }} 
-                                  className="flex gap-2"
-                                >
-                                    <Input 
-                                      type="number" 
-                                      value={salary} 
-                                      onChange={e => setSalary(e.target.value)} 
-                                      className="font-mono bg-slate-50" 
-                                    />
-                                    <Button variant="outline" type="submit">
-                                      <Edit className="h-4 w-4"/>
-                                    </Button>
-                                </form>
-                            </CardContent>
-                        </Card>
+                        <div className="flex flex-col gap-6">
+                            {/* Bloc : Ajustement Salaire */}
+                            <Card className="shadow-sm border-slate-200">
+                                <CardHeader>
+                                  <CardTitle>Ajustement Revenus</CardTitle>
+                                </CardHeader>
+                                <CardContent>
+                                    <form
+                                      onSubmit={async (e) => {
+                                        e.preventDefault();
+                                        if (await saveData(expenses, fixedExpenses, month, parseFloat(salary))) {
+                                          toast({title:"Salaire mis à jour"})
+                                        }
+                                      }}
+                                      className="flex gap-2"
+                                    >
+                                        <Input
+                                          type="number"
+                                          value={salary}
+                                          onChange={e => setSalary(e.target.value)}
+                                          className="font-mono bg-slate-50"
+                                        />
+                                        <Button variant="outline" type="submit">
+                                          <Edit className="h-4 w-4"/>
+                                        </Button>
+                                    </form>
+                                </CardContent>
+                            </Card>
+
+                            {/* Bloc : Objectif d'épargne */}
+                            <Card className="shadow-sm border-slate-200">
+                                <CardHeader>
+                                  <CardTitle>Objectif d'Épargne</CardTitle>
+                                  <CardDescription>Basé sur la catégorie "Epargne"</CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                    <form
+                                      onSubmit={async (e) => {
+                                        e.preventDefault()
+                                        if (await saveData(expenses, fixedExpenses, month, parseFloat(salary), parseFloat(savingsGoalInput))) {
+                                          toast({ title: "Objectif d'épargne mis à jour" })
+                                        }
+                                      }}
+                                      className="flex gap-2"
+                                    >
+                                        <Input
+                                          type="number"
+                                          value={savingsGoalInput}
+                                          onChange={e => setSavingsGoalInput(e.target.value)}
+                                          className="font-mono bg-slate-50"
+                                        />
+                                        <Button variant="outline" type="submit">
+                                          <Edit className="h-4 w-4"/>
+                                        </Button>
+                                    </form>
+                                    {savingsGoalNum > 0 && (
+                                        <div>
+                                            <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+                                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${savingsProgress}%` }} />
+                                            </div>
+                                            <p className="text-xs text-slate-500 mt-1">
+                                              {epargneTotal.toFixed(2)} € / {savingsGoalNum.toFixed(2)} € épargnés
+                                            </p>
+                                        </div>
+                                    )}
+                                </CardContent>
+                            </Card>
+                        </div>
 
                         {/* Bloc : Graphique Camembert */}
                         <Card className="lg:col-span-2 shadow-sm border-slate-200">
@@ -973,6 +1136,51 @@ export default function ExpenseTracker() {
                             </CardContent>
                         </Card>
                     </div>
+
+                    {/* Bloc : Conseils du mois */}
+                    <Card className="shadow-sm border-slate-200">
+                        <CardHeader>
+                          <CardTitle>Conseils du mois</CardTitle>
+                        </CardHeader>
+                        <CardContent className="space-y-3">
+                            {overBudgetCategories.length > 0 ? (
+                                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3">
+                                    <TrendingDown className="h-4 w-4 mt-0.5 shrink-0" />
+                                    <p>
+                                      Vous avez dépassé votre budget en {" "}
+                                      {overBudgetCategories.map((c, i) => (
+                                        <span key={c.id} className="font-semibold">
+                                          {c.name} ({c.spent.toFixed(2)} € / {c.budget} €){i < overBudgetCategories.length - 1 ? ", " : ""}
+                                        </span>
+                                      ))}.
+                                    </p>
+                                </div>
+                            ) : hasAnyBudget ? (
+                                <div className="flex items-start gap-2 text-sm text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
+                                    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                                    <p>Bravo, vous respectez tous vos budgets ce mois-ci !</p>
+                                </div>
+                            ) : (
+                                <p className="text-sm text-slate-500">
+                                  Définissez des budgets par catégorie (bouton + dans "Ajout Rapide") pour recevoir des conseils personnalisés.
+                                </p>
+                            )}
+
+                            {weeklyPacing && (
+                                weeklyPacing.isOver ? (
+                                    <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3">
+                                        <TrendingDown className="h-4 w-4 mt-0.5 shrink-0" />
+                                        <p>Vous êtes déjà en dépassement de {weeklyPacing.value.toFixed(2)} € pour ce mois.</p>
+                                    </div>
+                                ) : (
+                                    <div className="flex items-start gap-2 text-sm text-slate-600 bg-slate-50 border border-slate-100 rounded-lg p-3">
+                                        <Calendar className="h-4 w-4 mt-0.5 shrink-0" />
+                                        <p>Il vous reste <span className="font-semibold">{weeklyPacing.value.toFixed(2)} €/semaine</span> pour finir le mois sereinement.</p>
+                                    </div>
+                                )
+                            )}
+                        </CardContent>
+                    </Card>
 
                     {/* Bloc : Dernières Transactions */}
                     <Card className="shadow-sm border-slate-200">
@@ -1225,6 +1433,24 @@ export default function ExpenseTracker() {
                                 <CardDescription>Ajoutez une transaction rapidement</CardDescription>
                             </CardHeader>
                             <CardContent className="pt-6">
+                                {frequentSuggestions.length > 0 && (
+                                    <div className="mb-6 space-y-2">
+                                        <Label className="text-slate-500 text-xs uppercase tracking-wide">Suggestions rapides</Label>
+                                        <div className="flex flex-wrap gap-2">
+                                            {frequentSuggestions.map((sugg, i) => (
+                                                <button
+                                                  key={i}
+                                                  type="button"
+                                                  onClick={() => quickLogSuggestion(sugg)}
+                                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-slate-100 text-sm transition-colors"
+                                                >
+                                                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categories.find(c => c.id === sugg.category)?.color }} />
+                                                    {sugg.description} · {sugg.amount.toFixed(2)}€
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                                 <form onSubmit={addExpense} className="space-y-6">
                                     <div className="grid grid-cols-2 gap-6">
                                         <div className="space-y-2">
@@ -1309,6 +1535,39 @@ export default function ExpenseTracker() {
                                                                 </div>
                                                             </div>
                                                         )}
+
+                                                        <div className="pt-4 border-t space-y-2">
+                                                            <Label className="text-slate-500 text-xs uppercase tracking-wide">Budgets mensuels (optionnel)</Label>
+                                                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                                                {categories.filter(c => c.id !== "epargne").map(c => (
+                                                                    <div key={c.id} className="flex items-center justify-between gap-2 py-1">
+                                                                        <div className="flex items-center gap-2 min-w-0">
+                                                                            <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
+                                                                            <span className="text-sm text-slate-700 truncate">{c.name}</span>
+                                                                        </div>
+                                                                        <div className="relative w-28 shrink-0">
+                                                                            <Input
+                                                                              type="number"
+                                                                              min="0"
+                                                                              placeholder="Aucun"
+                                                                              className="h-8 text-sm pr-6"
+                                                                              value={categoryBudgets[c.id] ?? ""}
+                                                                              onChange={e => setCategoryBudgets(prev => ({ ...prev, [c.id]: parseFloat(e.target.value) || 0 }))}
+                                                                            />
+                                                                            <span className="absolute right-2 top-1.5 text-xs text-slate-400">€</span>
+                                                                        </div>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                            <Button
+                                                              type="button"
+                                                              variant="outline"
+                                                              className="w-full"
+                                                              onClick={() => saveCategoryBudgets(categoryBudgets)}
+                                                            >
+                                                              Enregistrer les budgets
+                                                            </Button>
+                                                        </div>
                                                     </DialogContent>
                                                 </Dialog>
                                             </div>
@@ -1344,6 +1603,95 @@ export default function ExpenseTracker() {
             </>
         )}
       </div>
+
+      {/* --- BOUTON FLOTTANT D'AJOUT RAPIDE --- */}
+      {month !== "" && (
+          <Dialog
+            open={isQuickAddOpen}
+            onOpenChange={(open) => {
+              setIsQuickAddOpen(open)
+              if (!open) {
+                setAmount("")
+                setDescription("")
+                setCategory("alimentation")
+              }
+            }}
+          >
+              <DialogTrigger asChild>
+                <Button
+                  size="icon"
+                  className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-slate-900 text-white shadow-lg hover:bg-slate-800"
+                >
+                  <Plus className="h-6 w-6" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Ajout rapide</DialogTitle>
+                    <DialogDescription>Loggez une dépense en quelques secondes, depuis n'importe quel onglet.</DialogDescription>
+                  </DialogHeader>
+
+                  {frequentSuggestions.length > 0 && (
+                      <div className="space-y-2">
+                          <Label className="text-slate-500 text-xs uppercase tracking-wide">Suggestions rapides</Label>
+                          <div className="flex flex-wrap gap-2">
+                              {frequentSuggestions.map((sugg, i) => (
+                                  <button
+                                    key={i}
+                                    type="button"
+                                    onClick={async () => { await quickLogSuggestion(sugg); setIsQuickAddOpen(false) }}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-slate-100 text-sm transition-colors"
+                                  >
+                                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categories.find(c => c.id === sugg.category)?.color }} />
+                                      {sugg.description} · {sugg.amount.toFixed(2)}€
+                                  </button>
+                              ))}
+                          </div>
+                      </div>
+                  )}
+
+                  <form onSubmit={addExpense} className="space-y-4 pt-2">
+                      <div className="grid grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                              <Label className="text-slate-600">Montant</Label>
+                              <div className="relative">
+                                <span className="absolute left-3 top-2.5 text-slate-400">€</span>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  className="pl-8"
+                                  placeholder="0.00"
+                                  value={amount}
+                                  onChange={e => setAmount(e.target.value)}
+                                  autoFocus
+                                />
+                              </div>
+                          </div>
+                          <div className="space-y-2">
+                              <Label className="text-slate-600">Catégorie</Label>
+                              <Select value={category} onValueChange={setCategory}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    {categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                                  </SelectContent>
+                              </Select>
+                          </div>
+                      </div>
+                      <div className="space-y-2">
+                          <Label className="text-slate-600">Description (optionnel)</Label>
+                          <Input
+                            placeholder="Ex: Courses Carrefour..."
+                            value={description}
+                            onChange={e => setDescription(e.target.value)}
+                          />
+                      </div>
+                      <Button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white">
+                        Valider la dépense
+                      </Button>
+                  </form>
+              </DialogContent>
+          </Dialog>
+      )}
     </div>
   )
 }
