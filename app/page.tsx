@@ -414,14 +414,14 @@ export default function ExpenseTracker() {
   // ==========================================
   async function addExpense(e: FormEvent) {
     e.preventDefault()
-    if (!amount || !description) return
+    if (!amount) return
 
-    const newExp: Expense = { 
-      id: Date.now().toString(), 
-      amount: parseFloat(amount), 
-      description, 
-      category, 
-      date: new Date().toISOString().split("T")[0] 
+    const newExp: Expense = {
+      id: Date.now().toString(),
+      amount: parseFloat(amount),
+      description: description.trim() || categories.find(c => c.id === category)?.name || "Dépense",
+      category,
+      date: new Date().toISOString().split("T")[0]
     }
 
     const newExps = [newExp, ...expenses]
@@ -1321,9 +1321,9 @@ export default function ExpenseTracker() {
                                         </div>
                                     </div>
                                     <div className="space-y-2">
-                                        <Label className="text-slate-600">Description</Label>
-                                        <Input 
-                                          placeholder="Ex: Courses Carrefour..." 
+                                        <Label className="text-slate-600">Description (optionnel)</Label>
+                                        <Input
+                                          placeholder="Ex: Courses Carrefour..."
                                           value={description} 
                                           onChange={e => setDescription(e.target.value)} 
                                         />
