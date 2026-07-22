@@ -345,6 +345,19 @@ export default function ExpenseTracker() {
   // ==========================================
   // 5. GESTION DU MOIS (Création / Suppression)
   // ==========================================
+
+  // Suggère le mois suivant le dernier mois connu (reste modifiable librement)
+  function getSuggestedNextMonth(): string {
+    const reference = month || [...allMonths].sort().slice(-1)[0] || ""
+    const [y, m] = reference.split("-").map(Number)
+    if (!y || !m) return ""
+
+    const nextDate = new Date(y, m, 1) // m est 1-indexé -> index 0-indexé du mois suivant
+    const ny = nextDate.getFullYear()
+    const nm = (nextDate.getMonth() + 1).toString().padStart(2, "0")
+    return `${ny}-${nm}`
+  }
+
   async function createNewMonth(e: FormEvent) {
     e.preventDefault()
     if (!newMonthInput || !newMonthSalary || !currentUser) return
@@ -730,7 +743,14 @@ export default function ExpenseTracker() {
                     </Button>
                 )}
 
-                <Dialog>
+                <Dialog
+                  onOpenChange={(open) => {
+                    if (open) {
+                      setNewMonthInput(getSuggestedNextMonth())
+                      setNewMonthSalary(salary || newMonthSalary)
+                    }
+                  }}
+                >
                     <DialogTrigger asChild>
                       <Button size="sm" className="bg-slate-900 text-white shadow-sm hover:bg-slate-800">
                         <Plus className="h-4 w-4 mr-1"/> Nouveau
@@ -739,23 +759,26 @@ export default function ExpenseTracker() {
                     <DialogContent>
                         <DialogHeader>
                           <DialogTitle>Créer un nouveau mois</DialogTitle>
+                          <DialogDescription>
+                            Le mois suivant est proposé automatiquement, mais vous pouvez le modifier librement.
+                          </DialogDescription>
                         </DialogHeader>
                         <form onSubmit={createNewMonth} className="space-y-4 pt-4">
                             <div className="grid grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                   <Label>Mois (YYYY-MM)</Label>
-                                  <Input 
-                                    placeholder="2025-06" 
-                                    value={newMonthInput} 
+                                  <Input
+                                    placeholder="2025-06"
+                                    value={newMonthInput}
                                     onChange={e => setNewMonthInput(e.target.value)}
                                   />
                                 </div>
                                 <div className="space-y-2">
                                   <Label>Salaire Est.</Label>
-                                  <Input 
-                                    type="number" 
-                                    placeholder="2000" 
-                                    value={newMonthSalary} 
+                                  <Input
+                                    type="number"
+                                    placeholder="2000"
+                                    value={newMonthSalary}
                                     onChange={e => setNewMonthSalary(e.target.value)}
                                   />
                                 </div>
