@@ -132,6 +132,7 @@ export default function ExpenseTracker() {
 
   // Données Globales
   const [allMonths, setAllMonths] = useState<string[]>([])
+  const [allExpensesHistory, setAllExpensesHistory] = useState<Expense[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
   // Données du Mois Sélectionné
@@ -272,6 +273,7 @@ export default function ExpenseTracker() {
       
       const data: AllData = await res.json()
       setAllMonths(data.months.map((m) => m.month))
+      setAllExpensesHistory(data.months.flatMap((m) => m.expenses))
       setCustomCategories(data.customCategories || [])
       setCategoryBudgets(data.categoryBudgets || {})
     } catch (error) { 
@@ -697,9 +699,9 @@ export default function ExpenseTracker() {
   const savingsGoalNum = parseFloat(savingsGoalInput) || 0
   const savingsProgress = savingsGoalNum > 0 ? Math.min(100, (epargneTotal / savingsGoalNum) * 100) : 0
 
-  // Suggestions de dépenses fréquentes du mois (top 3, pour un relog en un clic)
+  // Suggestions de dépenses fréquentes (top 3 tous mois confondus, pour un relog en un clic)
   const expenseFrequency = new Map<string, { amount: number; description: string; category: string; count: number }>()
-  expenses.forEach(e => {
+  allExpensesHistory.forEach(e => {
     const key = `${e.category}|${e.description}|${e.amount}`
     const existing = expenseFrequency.get(key)
     if (existing) {
