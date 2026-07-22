@@ -699,19 +699,27 @@ export default function ExpenseTracker() {
   const savingsGoalNum = parseFloat(savingsGoalInput) || 0
   const savingsProgress = savingsGoalNum > 0 ? Math.min(100, (epargneTotal / savingsGoalNum) * 100) : 0
 
-  // Suggestions de dépenses fréquentes (top 3 tous mois confondus, pour un relog en un clic)
-  const expenseFrequency = new Map<string, { amount: number; description: string; category: string; count: number }>()
+  // Suggestions de dépenses fréquentes (top 3 tous mois confondus, pour un relog en un clic).
+  // Regroupées par catégorie + description uniquement (pas le montant) : une dépense récurrente
+  // à prix variable (courses, essence...) ne doit pas être éclatée en une entrée par montant,
+  // chacune ne comptant alors qu'une fois — ce qui laissait un achat ponctuel arriver à égalité
+  // et gagner par hasard d'ordre. Le montant le plus récent est conservé pour le relog rapide.
+  const expenseFrequency = new Map<string, { amount: number; description: string; category: string; count: number; lastDate: string }>()
   allExpensesHistory.forEach(e => {
-    const key = `${e.category}|${e.description}|${e.amount}`
+    const key = `${e.category}|${e.description}`
     const existing = expenseFrequency.get(key)
     if (existing) {
       existing.count += 1
+      if (e.date >= existing.lastDate) {
+        existing.amount = e.amount
+        existing.lastDate = e.date
+      }
     } else {
-      expenseFrequency.set(key, { amount: e.amount, description: e.description, category: e.category, count: 1 })
+      expenseFrequency.set(key, { amount: e.amount, description: e.description, category: e.category, count: 1, lastDate: e.date })
     }
   })
   const frequentSuggestions = Array.from(expenseFrequency.values())
-    .filter(combo => categories.some(c => c.id === combo.category))
+    .filter(combo => combo.count >= 2 && categories.some(c => c.id === combo.category))
     .sort((a, b) => b.count - a.count)
     .slice(0, 3)
 
