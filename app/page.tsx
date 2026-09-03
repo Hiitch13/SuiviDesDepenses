@@ -114,6 +114,12 @@ type Category = {
   color: string
 }
 
+type IncomeEntry = {
+  id: string
+  amount: number
+  description: string
+}
+
 type MonthData = {
   user?: string
   month: string
@@ -121,6 +127,7 @@ type MonthData = {
   expenses: Expense[]
   fixedExpenses: FixedExpense[]
   savingsGoal?: number
+  extraIncomes?: IncomeEntry[]
 }
 
 type ProjectType = "voyage" | "achat" | "projet"
@@ -167,6 +174,7 @@ export default function ExpenseTracker() {
   const [salary, setSalary] = useState("")
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([])
+  const [extraIncomes, setExtraIncomes] = useState<IncomeEntry[]>([])
 
   // UI & Feedback
   const { toast } = useToast()
@@ -200,6 +208,10 @@ export default function ExpenseTracker() {
   // Bouton flottant d'ajout rapide
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
   
+  // Formulaire : Revenus supplémentaires
+  const [incomeAmount, setIncomeAmount] = useState("")
+  const [incomeDescription, setIncomeDescription] = useState("")
+
   // Formulaires : Charges Fixes
   const [fixedAmount, setFixedAmount] = useState("")
   const [fixedDescription, setFixedDescription] = useState("")
@@ -272,6 +284,7 @@ export default function ExpenseTracker() {
             setSalary("")
             setExpenses([])
             setFixedExpenses([])
+            setExtraIncomes([])
             setSavingsGoalInput("0")
         } else {
             toast({ 
@@ -342,6 +355,7 @@ export default function ExpenseTracker() {
       setSalary(data.salary.toString())
       setExpenses(data.expenses)
       setFixedExpenses(data.fixedExpenses)
+      setExtraIncomes(data.extraIncomes ?? [])
       setSavingsGoalInput((data.savingsGoal ?? 0).toString())
     } catch (error) {
       console.error(error)
@@ -371,7 +385,8 @@ export default function ExpenseTracker() {
     newFixedExpenses: FixedExpense[],
     newMonth: string = month,
     newSalary: number = parseFloat(salary),
-    newSavingsGoal: number = parseFloat(savingsGoalInput)
+    newSavingsGoal: number = parseFloat(savingsGoalInput),
+    newExtraIncomes: IncomeEntry[] = extraIncomes
   ) {
     if (!newMonth || !currentUser) return false
 
@@ -387,6 +402,7 @@ export default function ExpenseTracker() {
           expenses: newExpenses,
           fixedExpenses: newFixedExpenses,
           savingsGoal: newSavingsGoal,
+          extraIncomes: newExtraIncomes,
         }),
       })
 
@@ -466,6 +482,7 @@ export default function ExpenseTracker() {
          setSalary("")
          setExpenses([])
          setFixedExpenses([])
+         setExtraIncomes([])
          fetchAllMonths()
        } else {
          toast({ title: "Erreur suppression", variant: "destructive" })
@@ -506,6 +523,7 @@ export default function ExpenseTracker() {
           expenses,
           fixedExpenses,
           savingsGoal: parseFloat(savingsGoalInput) || 0,
+          extraIncomes,
         }),
       })
       if (!createRes.ok) throw new Error("create")
@@ -777,6 +795,36 @@ export default function ExpenseTracker() {
   }
 
   // ==========================================
+  // 6quater. GESTION DES REVENUS SUPPLÉMENTAIRES
+  // ==========================================
+  async function addExtraIncome(e: FormEvent) {
+    e.preventDefault()
+    if (!incomeAmount || !incomeDescription.trim()) return
+
+    const newIncome: IncomeEntry = {
+      id: Date.now().toString(),
+      amount: parseFloat(incomeAmount),
+      description: incomeDescription.trim(),
+    }
+    const newList = [...extraIncomes, newIncome]
+
+    if (await saveData(expenses, fixedExpenses, month, parseFloat(salary), parseFloat(savingsGoalInput), newList)) {
+      setExtraIncomes(newList)
+      setIncomeAmount("")
+      setIncomeDescription("")
+      toast({ title: "Revenu supplémentaire ajouté" })
+    }
+  }
+
+  async function deleteExtraIncome(id: string) {
+    const newList = extraIncomes.filter((i) => i.id !== id)
+    if (await saveData(expenses, fixedExpenses, month, parseFloat(salary), parseFloat(savingsGoalInput), newList)) {
+      setExtraIncomes(newList)
+      toast({ title: "Revenu supprimé" })
+    }
+  }
+
+  // ==========================================
   // 7. GESTION DES CHARGES FIXES
   // ==========================================
   async function addFixedExpense(e: FormEvent) {
@@ -841,11 +889,14 @@ export default function ExpenseTracker() {
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
   const totalFixed = fixedExpenses.reduce((sum, e) => sum + e.amount, 0)
   const numericSalary = parseFloat(salary) || 0
+  const totalExtraIncome = extraIncomes.reduce((sum, i) => sum + i.amount, 0)
+  // Revenus totaux = salaire + revenus supplémentaires
+  const totalIncome = numericSalary + totalExtraIncome
   const totalOut = totalExpenses + totalFixed
-  const balance = numericSalary - totalOut
-  
+  const balance = totalIncome - totalOut
+
   // Pour la barre de progression (max 100%)
-  const progress = numericSalary > 0 ? (totalOut / numericSalary) * 100 : 0
+  const progress = totalIncome > 0 ? (totalOut / totalIncome) * 100 : 0
   
   // Filtrage des dépenses
   const filteredExpenses = selectedCategory 
@@ -1306,10 +1357,16 @@ export default function ExpenseTracker() {
                         </div>
                     </CardHeader>
                     <CardContent>
-                        <div className="text-2xl font-bold text-slate-900">{numericSalary.toFixed(2)} €</div>
-                        <div className="flex items-center text-xs text-emerald-600 mt-1 bg-emerald-50 w-fit px-2 py-0.5 rounded-full">
-                            <TrendingUp className="h-3 w-3 mr-1" /> Entrées
-                        </div>
+                        <div className="text-2xl font-bold text-slate-900">{totalIncome.toFixed(2)} €</div>
+                        {totalExtraIncome > 0 ? (
+                            <p className="text-xs text-slate-500 mt-1">
+                              Salaire {numericSalary.toFixed(2)} € + suppl. {totalExtraIncome.toFixed(2)} €
+                            </p>
+                        ) : (
+                            <div className="flex items-center text-xs text-emerald-600 mt-1 bg-emerald-50 w-fit px-2 py-0.5 rounded-full">
+                                <TrendingUp className="h-3 w-3 mr-1" /> Entrées
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
 
@@ -1416,6 +1473,69 @@ export default function ExpenseTracker() {
                                         />
                                         <Button variant="outline" type="submit">
                                           <Edit className="h-4 w-4"/>
+                                        </Button>
+                                    </form>
+                                </CardContent>
+                            </Card>
+
+                            {/* Bloc : Revenus supplémentaires */}
+                            <Card className="shadow-sm border-slate-200">
+                                <CardHeader>
+                                  <CardTitle>Revenus supplémentaires</CardTitle>
+                                  <CardDescription>Primes, revenus annexes, cadeaux reçus…</CardDescription>
+                                </CardHeader>
+                                <CardContent className="space-y-3">
+                                    {extraIncomes.length > 0 && (
+                                        <div className="space-y-2">
+                                            {extraIncomes.map((inc) => (
+                                                <div key={inc.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <div className="p-1.5 rounded-md bg-emerald-100 text-emerald-600 shrink-0">
+                                                          <DollarSign className="h-4 w-4" />
+                                                        </div>
+                                                        <span className="text-sm text-slate-700 truncate">{inc.description}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        <span className="font-semibold text-emerald-600">+{inc.amount.toFixed(2)} €</span>
+                                                        <Button
+                                                          size="icon"
+                                                          variant="ghost"
+                                                          className="h-7 w-7 text-slate-400 hover:text-red-500"
+                                                          onClick={() => deleteExtraIncome(inc.id)}
+                                                        >
+                                                          <Trash2 className="h-3.5 w-3.5" />
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                            <div className="flex items-center justify-between text-sm font-medium text-slate-600 pt-1">
+                                                <span>Total supplémentaire</span>
+                                                <span className="text-emerald-600">+{totalExtraIncome.toFixed(2)} €</span>
+                                            </div>
+                                        </div>
+                                    )}
+                                    <form onSubmit={addExtraIncome} className="flex flex-col gap-2 pt-1">
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div className="relative col-span-1">
+                                                <Input
+                                                  type="number"
+                                                  step="0.01"
+                                                  placeholder="Montant"
+                                                  value={incomeAmount}
+                                                  onChange={e => setIncomeAmount(e.target.value)}
+                                                  className="pr-5 bg-slate-50"
+                                                />
+                                                <span className="absolute right-2 top-2.5 text-xs text-slate-400">€</span>
+                                            </div>
+                                            <Input
+                                              placeholder="Ex: Prime"
+                                              value={incomeDescription}
+                                              onChange={e => setIncomeDescription(e.target.value)}
+                                              className="col-span-2 bg-slate-50"
+                                            />
+                                        </div>
+                                        <Button type="submit" variant="outline" className="w-full">
+                                          <Plus className="h-4 w-4 mr-1" /> Ajouter un revenu
                                         </Button>
                                     </form>
                                 </CardContent>

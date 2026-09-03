@@ -16,6 +16,13 @@ type Expense = {
   date: string;
 };
 
+// Revenu supplémentaire ponctuel (prime, revenu annexe, cadeau reçu...)
+type IncomeEntry = {
+  id: string;
+  amount: number;
+  description: string;
+};
+
 type Category = {
   id: string;
   name: string;
@@ -58,6 +65,8 @@ type MonthData = {
   fixedExpenses: FixedExpense[];
   // Objectif d'épargne du mois (optionnel)
   savingsGoal?: number;
+  // Revenus supplémentaires du mois (en plus du salaire)
+  extraIncomes?: IncomeEntry[];
 };
 
 // Structure globale du JSON
