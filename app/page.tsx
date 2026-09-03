@@ -764,10 +764,9 @@ export default function ExpenseTracker() {
 
   async function saveInitialSavings() {
     const value = parseFloat(initialSavingsInput) || 0
-    // On horodate le solde au mois courant : l'épargne ne sera cumulée
-    // qu'à partir de ce mois-là.
-    const nowDate = new Date()
-    const refMonth = `${nowDate.getFullYear()}-${(nowDate.getMonth() + 1).toString().padStart(2, "0")}`
+    // On horodate le solde au mois de la fiche consultée : l'épargne est cumulée
+    // à partir de ce mois (inclus). On colle ainsi à ce que l'utilisateur voit.
+    const refMonth = month || currentMonthStr
     if (await saveProjects(projects, value, refMonth)) {
       setInitialSavings(value)
       setInitialSavingsMonth(refMonth)
@@ -945,8 +944,9 @@ export default function ExpenseTracker() {
   // ANCRAGE DATÉ DU SOLDE DE DÉPART :
   // Le solde de départ est daté du mois où il a été renseigné pour la dernière
   // fois (initialSavingsMonth). On ancre la projection à ce mois, avec ce solde,
-  // puis on ajoute UNIQUEMENT l'épargne (catégorie "Epargne") des mois SUIVANTS.
-  // Ainsi : "solde de départ + épargne depuis le mois du solde renseigné".
+  // puis on ajoute l'épargne (catégorie "Epargne") du mois de référence INCLUS
+  // et de tous les mois suivants.
+  // Ainsi : "solde de départ + épargne depuis (et y compris) le mois renseigné".
   // Si aucun solde n'a jamais été renseigné, on repart du 1er mois connu à 0.
   let anchorMonth: string
   let anchorBalance: number
@@ -956,15 +956,15 @@ export default function ExpenseTracker() {
     anchorBalance = initialSavings
   } else {
     const recorded = [...netByMonth.keys()].sort()
-    anchorMonth = recorded.length > 0 ? addMonths(recorded[0], -1) : addMonths(currentMonthStr, -1)
+    anchorMonth = recorded.length > 0 ? recorded[0] : currentMonthStr
     anchorBalance = 0
   }
 
   // Épargne mensuelle moyenne pour extrapoler les mois à venir, estimée sur les
-  // mois enregistrés situés APRÈS l'ancre (fenêtre d'observation réelle).
-  const observedAfterAnchor = [...netByMonth.keys()].filter(mo => mo > anchorMonth)
-  const avgNet = observedAfterAnchor.length > 0
-    ? observedAfterAnchor.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / observedAfterAnchor.length
+  // mois enregistrés situés à partir de l'ancre (fenêtre d'observation réelle).
+  const observedFromAnchor = [...netByMonth.keys()].filter(mo => mo >= anchorMonth)
+  const avgNet = observedFromAnchor.length > 0
+    ? observedFromAnchor.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / observedFromAnchor.length
     : 0
 
   // Fin de la timeline : de l'ancre jusqu'au dernier mois avec données / dernière
@@ -998,12 +998,11 @@ export default function ExpenseTracker() {
       const isRecorded = netByMonth.has(cursor)
       // On n'extrapole (avgNet) que les mois STRICTEMENT futurs. Le mois en cours
       // et les mois passés sans donnée valent 0 (épargne réellement enregistrée).
+      // L'épargne du mois d'ancrage est comptée elle aussi (référence incluse).
       const isFuture = cursor > currentMonthStr
-      if (cursor !== anchorMonth) {
-        runningBalance += isRecorded
-          ? (netByMonth.get(cursor) as number)
-          : (isFuture ? avgNet : 0)
-      }
+      runningBalance += isRecorded
+        ? (netByMonth.get(cursor) as number)
+        : (isFuture ? avgNet : 0)
       // On règle les projets échéant ce mois-ci
       const due = projectsByMonth.get(cursor) || []
       due.forEach(p => {
@@ -1876,7 +1875,7 @@ export default function ExpenseTracker() {
                             <CardTitle>Projection de l'épargne</CardTitle>
                             <CardDescription>
                               {hasStartingBalance
-                                ? `Solde de départ (${anchorMonth}) + épargne « Epargne » des mois suivants. `
+                                ? `Solde de départ (${anchorMonth}) + épargne « Epargne » depuis ce mois. `
                                 : "Cumul de l'épargne « Epargne » mois par mois. "}
                               Les projets « inclus » sont déduits à leur échéance ; les mois à venir sont extrapolés à partir de votre épargne moyenne ({avgNet.toFixed(0)} €/mois).
                             </CardDescription>
