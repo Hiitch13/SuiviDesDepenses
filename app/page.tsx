@@ -846,13 +846,13 @@ export default function ExpenseTracker() {
   // ==========================================
   // 8bis. PROJECTION D'ÉPARGNE & PROJETS
   // ==========================================
-  // Épargne nette réelle de chaque mois enregistré (salaire - charges fixes - dépenses variables)
+  // Épargne réelle de chaque mois = uniquement ce qui est explicitement rangé dans
+  // la catégorie "Epargne" (via l'ajout rapide). Le reste à vivre n'est PAS compté.
   const netByMonth = new Map<string, number>()
   allMonthsData.forEach(m => {
-    const net =
-      (m.salary || 0) -
-      m.fixedExpenses.reduce((s, f) => s + f.amount, 0) -
-      m.expenses.reduce((s, e) => s + e.amount, 0)
+    const net = m.expenses
+      .filter(e => e.category === "epargne")
+      .reduce((s, e) => s + e.amount, 0)
     netByMonth.set(m.month, net)
   })
 
@@ -1723,7 +1723,7 @@ export default function ExpenseTracker() {
                         <CardHeader>
                             <CardTitle>Projection de l'épargne</CardTitle>
                             <CardDescription>
-                              Solde d'épargne cumulé mois par mois. Les projets « inclus » sont déduits à leur échéance.
+                              Épargne cumulée (catégorie « Epargne ») mois par mois. Les projets « inclus » sont déduits à leur échéance.
                               Les mois à venir sont extrapolés à partir de votre épargne moyenne ({avgNet.toFixed(0)} €/mois).
                             </CardDescription>
                         </CardHeader>
