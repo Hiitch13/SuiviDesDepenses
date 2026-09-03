@@ -14,10 +14,15 @@ import {
   Calendar, 
   PieChart as PieChartIcon, 
   ArrowRight, 
-  DollarSign, 
-  Activity, 
+  DollarSign,
+  Activity,
   CheckCircle2,
-  Search
+  Search,
+  Target,
+  Plane,
+  ShoppingBag,
+  Rocket,
+  PiggyBank
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -55,17 +60,24 @@ import {
   DialogTrigger, 
   DialogClose,
 } from "@/components/ui/dialog"
+import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/components/ui/use-toast"
 
 // Import Recharts (Graphiques)
 // Assurez-vous d'avoir fait : npm install recharts
-import { 
-  PieChart, 
-  Pie, 
-  Cell, 
-  ResponsiveContainer, 
-  Tooltip as RechartsTooltip, 
-  Legend 
+import {
+  PieChart,
+  Pie,
+  Cell,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  Legend,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  ReferenceLine
 } from "recharts"
 
 // === PALETTE DE COULEURS ===
@@ -111,10 +123,23 @@ type MonthData = {
   savingsGoal?: number
 }
 
+type ProjectType = "voyage" | "achat" | "projet"
+
+type Project = {
+  id: string
+  name: string
+  amount: number
+  targetMonth: string
+  type: ProjectType
+  included: boolean
+}
+
 type AllData = {
   months: MonthData[]
   customCategories?: Category[]
   categoryBudgets?: Record<string, number>
+  projects?: Project[]
+  initialSavings?: number
 }
 
 export default function ExpenseTracker() {
@@ -133,6 +158,7 @@ export default function ExpenseTracker() {
   // Données Globales
   const [allMonths, setAllMonths] = useState<string[]>([])
   const [allExpensesHistory, setAllExpensesHistory] = useState<Expense[]>([])
+  const [allMonthsData, setAllMonthsData] = useState<MonthData[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
   // Données du Mois Sélectionné
@@ -159,6 +185,15 @@ export default function ExpenseTracker() {
 
   // Objectif d'épargne du mois
   const [savingsGoalInput, setSavingsGoalInput] = useState("0")
+
+  // Projets & épargne (inspiré du budget foyer Excel)
+  const [projects, setProjects] = useState<Project[]>([])
+  const [initialSavings, setInitialSavings] = useState<number>(0)
+  const [initialSavingsInput, setInitialSavingsInput] = useState("0")
+  const [newProjectName, setNewProjectName] = useState("")
+  const [newProjectAmount, setNewProjectAmount] = useState("")
+  const [newProjectMonth, setNewProjectMonth] = useState("")
+  const [newProjectType, setNewProjectType] = useState<ProjectType>("achat")
 
   // Bouton flottant d'ajout rapide
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
@@ -274,8 +309,12 @@ export default function ExpenseTracker() {
       const data: AllData = await res.json()
       setAllMonths(data.months.map((m) => m.month))
       setAllExpensesHistory(data.months.flatMap((m) => m.expenses))
+      setAllMonthsData(data.months)
       setCustomCategories(data.customCategories || [])
       setCategoryBudgets(data.categoryBudgets || {})
+      setProjects(data.projects || [])
+      setInitialSavings(data.initialSavings || 0)
+      setInitialSavingsInput((data.initialSavings || 0).toString())
     } catch (error) { 
       console.error(error) 
     } finally { 
@@ -582,6 +621,87 @@ export default function ExpenseTracker() {
   }
 
   // ==========================================
+  // 6ter. GESTION DES PROJETS & DU SOLDE INITIAL
+  // ==========================================
+  async function saveProjects(newProjects: Project[], newInitialSavings: number = initialSavings) {
+    if (!currentUser) return false
+    try {
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isProjectUpdate: true,
+          username: currentUser,
+          projects: newProjects,
+          initialSavings: newInitialSavings,
+        }),
+      })
+      return res.ok
+    } catch (error) {
+      console.error(error)
+      return false
+    }
+  }
+
+  async function addProject(e: FormEvent) {
+    e.preventDefault()
+    if (!newProjectName.trim() || !newProjectAmount || !newProjectMonth) {
+      toast({ title: "Champs requis", description: "Nom, montant et mois cible sont obligatoires.", variant: "destructive" })
+      return
+    }
+
+    const newProject: Project = {
+      id: Date.now().toString(),
+      name: newProjectName.trim(),
+      amount: parseFloat(newProjectAmount),
+      targetMonth: newProjectMonth,
+      type: newProjectType,
+      included: true,
+    }
+
+    const newList = [...projects, newProject]
+    if (await saveProjects(newList)) {
+      setProjects(newList)
+      setNewProjectName("")
+      setNewProjectAmount("")
+      setNewProjectMonth("")
+      setNewProjectType("achat")
+      toast({ title: "Projet ajouté" })
+    } else {
+      toast({ title: "Erreur lors de l'ajout du projet", variant: "destructive" })
+    }
+  }
+
+  async function toggleProjectIncluded(id: string) {
+    const newList = projects.map(p => p.id === id ? { ...p, included: !p.included } : p)
+    setProjects(newList) // feedback immédiat pour la simulation
+    if (!(await saveProjects(newList))) {
+      toast({ title: "Erreur d'enregistrement", variant: "destructive" })
+      setProjects(projects) // rollback
+    }
+  }
+
+  async function deleteProject(id: string) {
+    const newList = projects.filter(p => p.id !== id)
+    if (await saveProjects(newList)) {
+      setProjects(newList)
+      toast({ title: "Projet supprimé" })
+    } else {
+      toast({ title: "Erreur lors de la suppression", variant: "destructive" })
+    }
+  }
+
+  async function saveInitialSavings() {
+    const value = parseFloat(initialSavingsInput) || 0
+    if (await saveProjects(projects, value)) {
+      setInitialSavings(value)
+      toast({ title: "Solde de départ mis à jour" })
+    } else {
+      toast({ title: "Erreur d'enregistrement", variant: "destructive" })
+    }
+  }
+
+  // ==========================================
   // 7. GESTION DES CHARGES FIXES
   // ==========================================
   async function addFixedExpense(e: FormEvent) {
@@ -722,6 +842,94 @@ export default function ExpenseTracker() {
     .filter(combo => combo.count >= 2 && categories.some(c => c.id === combo.category))
     .sort((a, b) => b.count - a.count)
     .slice(0, 3)
+
+  // ==========================================
+  // 8bis. PROJECTION D'ÉPARGNE & PROJETS
+  // ==========================================
+  // Épargne nette réelle de chaque mois enregistré (salaire - charges fixes - dépenses variables)
+  const netByMonth = new Map<string, number>()
+  allMonthsData.forEach(m => {
+    const net =
+      (m.salary || 0) -
+      m.fixedExpenses.reduce((s, f) => s + f.amount, 0) -
+      m.expenses.reduce((s, e) => s + e.amount, 0)
+    netByMonth.set(m.month, net)
+  })
+
+  const recordedMonths = [...netByMonth.keys()].sort()
+  // Épargne mensuelle moyenne, utilisée pour extrapoler les mois à venir
+  const avgNet =
+    recordedMonths.length > 0
+      ? [...netByMonth.values()].reduce((s, n) => s + n, 0) / recordedMonths.length
+      : 0
+
+  const includedProjects = projects.filter(p => p.included)
+
+  // Ajoute n mois à une chaîne "YYYY-MM"
+  function addMonths(ym: string, n: number): string {
+    const [y, mo] = ym.split("-").map(Number)
+    const d = new Date(y, (mo - 1) + n, 1)
+    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}`
+  }
+
+  // Bornes de la timeline : du 1er mois connu (ou du mois courant) jusqu'au dernier
+  // mois enregistré / dernière échéance de projet inclus.
+  const allTimelineMonths = [
+    ...recordedMonths,
+    ...includedProjects.map(p => p.targetMonth),
+  ].filter(Boolean).sort()
+  const startMonth = allTimelineMonths[0] || currentMonthStr
+  const endMonth = allTimelineMonths[allTimelineMonths.length - 1] || currentMonthStr
+
+  // Projets inclus regroupés par mois d'échéance
+  const projectsByMonth = new Map<string, Project[]>()
+  includedProjects.forEach(p => {
+    const arr = projectsByMonth.get(p.targetMonth) || []
+    arr.push(p)
+    projectsByMonth.set(p.targetMonth, arr)
+  })
+
+  // Simulation mois par mois du solde d'épargne cumulé
+  const projectionData: { month: string; solde: number; projected: boolean }[] = []
+  const projectFeasibility = new Map<string, boolean>()
+  let runningBalance = initialSavings
+  if (recordedMonths.length > 0 || includedProjects.length > 0) {
+    let cursor = startMonth
+    let guard = 0
+    while (cursor <= endMonth && guard < 600) {
+      const isRecorded = netByMonth.has(cursor)
+      runningBalance += isRecorded ? (netByMonth.get(cursor) as number) : avgNet
+      // On règle les projets échéant ce mois-ci
+      const due = projectsByMonth.get(cursor) || []
+      due.forEach(p => {
+        projectFeasibility.set(p.id, runningBalance >= p.amount)
+        runningBalance -= p.amount
+      })
+      projectionData.push({
+        month: cursor,
+        solde: Math.round(runningBalance * 100) / 100,
+        projected: !isRecorded,
+      })
+      cursor = addMonths(cursor, 1)
+      guard++
+    }
+  }
+
+  // Solde d'épargne actuel = solde après le dernier mois RÉELLEMENT enregistré
+  const lastRecordedMonth = recordedMonths[recordedMonths.length - 1]
+  const currentSavings =
+    initialSavings + recordedMonths.reduce((s, m) => s + (netByMonth.get(m) as number), 0)
+  const projectedFinalSavings =
+    projectionData.length > 0 ? projectionData[projectionData.length - 1].solde : currentSavings
+  const hasNegativeProjection = projectionData.some(p => p.solde < 0)
+
+  const projectTypeMeta: Record<ProjectType, { label: string; color: string }> = {
+    voyage: { label: "Voyage", color: "#8b5cf6" },
+    achat: { label: "Achat", color: "#f59e0b" },
+    projet: { label: "Projet", color: "#3b82f6" },
+  }
+  const sortedProjects = [...projects].sort((a, b) => a.targetMonth.localeCompare(b.targetMonth))
+  const totalIncludedProjects = includedProjects.reduce((s, p) => s + p.amount, 0)
 
   // ==========================================
   // 9. RENDU : PAGE DE CONNEXION
@@ -1016,7 +1224,7 @@ export default function ExpenseTracker() {
 
             {/* --- ONGLETS / TABS --- */}
             <Tabs defaultValue="overview" className="space-y-6">
-                <TabsList className="bg-white border p-1 rounded-xl shadow-sm w-full md:w-auto grid grid-cols-4 md:flex h-auto">
+                <TabsList className="bg-white border p-1 rounded-xl shadow-sm w-full md:w-auto grid grid-cols-3 md:grid-cols-5 md:flex h-auto">
                     <TabsTrigger value="overview" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
                       Vue d'ensemble
                     </TabsTrigger>
@@ -1025,6 +1233,9 @@ export default function ExpenseTracker() {
                     </TabsTrigger>
                     <TabsTrigger value="fixed" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
                       Charges Fixes
+                    </TabsTrigger>
+                    <TabsTrigger value="projects" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
+                      Projets & Épargne
                     </TabsTrigger>
                     <TabsTrigger value="add" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
                       Ajout Rapide
@@ -1425,6 +1636,222 @@ export default function ExpenseTracker() {
                                     <Button type="submit" className="w-full bg-slate-900 text-white hover:bg-slate-800">
                                       Ajouter
                                     </Button>
+                                </form>
+                            </CardContent>
+                        </Card>
+                    </div>
+                </TabsContent>
+
+                {/* --- CONTENU ONGLET : PROJETS & ÉPARGNE --- */}
+                <TabsContent value="projects" className="space-y-6">
+                    {/* KPIs épargne */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <Card className="shadow-sm border-slate-200">
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium text-slate-500">Solde de départ</CardTitle>
+                                <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center">
+                                  <PiggyBank className="h-4 w-4 text-slate-600" />
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="flex gap-2">
+                                    <div className="relative flex-1">
+                                        <Input
+                                          type="number"
+                                          value={initialSavingsInput}
+                                          onChange={e => setInitialSavingsInput(e.target.value)}
+                                          className="font-mono bg-slate-50 pr-6"
+                                        />
+                                        <span className="absolute right-2 top-2.5 text-xs text-slate-400">€</span>
+                                    </div>
+                                    <Button variant="outline" size="icon" onClick={saveInitialSavings}>
+                                      <Edit className="h-4 w-4"/>
+                                    </Button>
+                                </div>
+                                <p className="text-xs text-slate-500 mt-2">Épargne avant le 1er mois suivi</p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-slate-200">
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium text-slate-500">Épargne actuelle</CardTitle>
+                                <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                                  <TrendingUp className="h-4 w-4 text-emerald-600" />
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className={`text-2xl font-bold ${currentSavings < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                  {currentSavings.toFixed(2)} €
+                                </div>
+                                <p className="text-xs text-slate-500 mt-1">
+                                  {lastRecordedMonth ? `Cumul jusqu'à ${lastRecordedMonth}` : "Aucun mois enregistré"}
+                                </p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-slate-200">
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium text-slate-500">Projection finale</CardTitle>
+                                <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                                  <Target className="h-4 w-4 text-blue-600" />
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className={`text-2xl font-bold ${projectedFinalSavings < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                  {projectedFinalSavings.toFixed(2)} €
+                                </div>
+                                <p className="text-xs text-slate-500 mt-1">Après projets inclus</p>
+                            </CardContent>
+                        </Card>
+
+                        <Card className="shadow-sm border-slate-200">
+                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                <CardTitle className="text-sm font-medium text-slate-500">Projets inclus</CardTitle>
+                                <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center">
+                                  <Rocket className="h-4 w-4 text-violet-600" />
+                                </div>
+                            </CardHeader>
+                            <CardContent>
+                                <div className="text-2xl font-bold text-slate-900">{totalIncludedProjects.toFixed(2)} €</div>
+                                <p className="text-xs text-slate-500 mt-1">{includedProjects.length} projet(s) actif(s)</p>
+                            </CardContent>
+                        </Card>
+                    </div>
+
+                    {/* Projection cumulée */}
+                    <Card className="shadow-sm border-slate-200">
+                        <CardHeader>
+                            <CardTitle>Projection de l'épargne</CardTitle>
+                            <CardDescription>
+                              Solde d'épargne cumulé mois par mois. Les projets « inclus » sont déduits à leur échéance.
+                              Les mois à venir sont extrapolés à partir de votre épargne moyenne ({avgNet.toFixed(0)} €/mois).
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="h-[320px]">
+                            {projectionData.length > 0 ? (
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <AreaChart data={projectionData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                                        <defs>
+                                            <linearGradient id="soldeGradient" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
+                                                <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                            </linearGradient>
+                                        </defs>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                                        <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#94a3b8" />
+                                        <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" width={55} />
+                                        <RechartsTooltip
+                                          formatter={(value: number) => [`${value.toFixed(2)} €`, "Solde"]}
+                                          contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                                        />
+                                        <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 4" />
+                                        <Area type="monotone" dataKey="solde" stroke="#10b981" strokeWidth={2} fill="url(#soldeGradient)" />
+                                    </AreaChart>
+                                </ResponsiveContainer>
+                            ) : (
+                                <div className="h-full flex items-center justify-center text-slate-400 text-sm text-center">
+                                  Enregistrez au moins un mois ou ajoutez un projet pour voir la projection.
+                                </div>
+                            )}
+                        </CardContent>
+                        {hasNegativeProjection && (
+                            <CardFooter>
+                                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3 w-full">
+                                    <TrendingDown className="h-4 w-4 mt-0.5 shrink-0" />
+                                    <p>Attention : votre solde d'épargne passe sous zéro sur la période. Décalez ou désactivez un projet pour rétablir l'équilibre.</p>
+                                </div>
+                            </CardFooter>
+                        )}
+                    </Card>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        {/* Liste des projets */}
+                        <div className="md:col-span-2 space-y-4">
+                            {sortedProjects.map((p) => {
+                                const meta = projectTypeMeta[p.type]
+                                const feasible = projectFeasibility.get(p.id)
+                                const TypeIcon = p.type === "voyage" ? Plane : p.type === "achat" ? ShoppingBag : Rocket
+                                return (
+                                    <Card key={p.id} className={`shadow-sm border-slate-200 group ${!p.included ? 'opacity-60' : ''}`}>
+                                        <CardContent className="p-4 flex items-center justify-between gap-4">
+                                            <div className="flex items-center gap-4 min-w-0">
+                                                <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: meta.color + '20', color: meta.color }}>
+                                                  <TypeIcon className="h-5 w-5" />
+                                                </div>
+                                                <div className="min-w-0">
+                                                    <p className="font-semibold text-slate-900 truncate">{p.name}</p>
+                                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                                        <Badge variant="secondary" className="font-normal" style={{ backgroundColor: meta.color + '20', color: meta.color }}>
+                                                          {meta.label}
+                                                        </Badge>
+                                                        <span className="text-xs text-slate-500">Échéance {p.targetMonth}</span>
+                                                        {p.included && (
+                                                          feasible ? (
+                                                            <Badge variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50">Réalisable</Badge>
+                                                          ) : (
+                                                            <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50">Épargne insuffisante</Badge>
+                                                          )
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-3 shrink-0">
+                                                <span className="font-bold text-lg">{p.amount.toFixed(2)} €</span>
+                                                <div className="flex flex-col items-center">
+                                                    <Switch checked={p.included} onCheckedChange={() => toggleProjectIncluded(p.id)} />
+                                                    <span className="text-[10px] text-slate-400 mt-0.5">Inclus</span>
+                                                </div>
+                                                <Button
+                                                  size="icon"
+                                                  variant="ghost"
+                                                  className="h-8 w-8 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                  onClick={() => deleteProject(p.id)}
+                                                >
+                                                  <Trash2 className="h-4 w-4"/>
+                                                </Button>
+                                            </div>
+                                        </CardContent>
+                                    </Card>
+                                )
+                            })}
+                            {projects.length === 0 && (
+                              <div className="text-center p-10 border-2 border-dashed rounded-xl text-slate-400">
+                                Aucun projet planifié. Ajoutez un voyage, un achat ou un projet à droite.
+                              </div>
+                            )}
+                        </div>
+
+                        {/* Formulaire nouveau projet */}
+                        <Card className="h-fit shadow-sm border-slate-200 bg-slate-50/50">
+                            <CardHeader>
+                              <CardTitle className="text-sm uppercase tracking-wide text-slate-500">Nouveau projet</CardTitle>
+                            </CardHeader>
+                            <CardContent>
+                                <form onSubmit={addProject} className="space-y-4">
+                                    <div className="space-y-2">
+                                      <Label>Nom</Label>
+                                      <Input placeholder="Ex: Voyage Japon" value={newProjectName} onChange={e => setNewProjectName(e.target.value)} className="bg-white" />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Type</Label>
+                                      <Select value={newProjectType} onValueChange={(v) => setNewProjectType(v as ProjectType)}>
+                                          <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="achat">Achat</SelectItem>
+                                            <SelectItem value="voyage">Voyage</SelectItem>
+                                            <SelectItem value="projet">Projet</SelectItem>
+                                          </SelectContent>
+                                      </Select>
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Montant (€)</Label>
+                                      <Input type="number" step="0.01" placeholder="1500" value={newProjectAmount} onChange={e => setNewProjectAmount(e.target.value)} className="bg-white" />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <Label>Mois cible (YYYY-MM)</Label>
+                                      <Input placeholder="2027-06" value={newProjectMonth} onChange={e => setNewProjectMonth(e.target.value)} className="bg-white" />
+                                    </div>
+                                    <Button type="submit" className="w-full bg-slate-900 text-white hover:bg-slate-800">Ajouter le projet</Button>
                                 </form>
                             </CardContent>
                         </Card>

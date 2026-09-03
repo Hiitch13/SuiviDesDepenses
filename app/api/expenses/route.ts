@@ -22,6 +22,16 @@ type Category = {
   color: string;
 };
 
+// Projet / achat / voyage planifié (inspiré du budget foyer Excel)
+type Project = {
+  id: string;
+  name: string;
+  amount: number; // coût total estimé
+  targetMonth: string; // échéance "YYYY-MM"
+  type: "voyage" | "achat" | "projet"; // catégorie du projet
+  included: boolean; // "Inclus ?" — activable / désactivable pour simuler
+};
+
 type User = {
   username: string;
   password: string;
@@ -31,6 +41,10 @@ type User = {
   customCategories?: Category[];
   // Budgets mensuels optionnels par catégorie (clé = id de catégorie)
   categoryBudgets?: Record<string, number>;
+  // Projets / achats / voyages planifiés (transversaux aux mois)
+  projects?: Project[];
+  // Solde d'épargne initial avant le premier mois suivi
+  initialSavings?: number;
 };
 
 type MonthData = {
@@ -117,6 +131,8 @@ export async function GET(request: Request) {
       months: userMonths,
       customCategories: currentUserData?.customCategories || [],
       categoryBudgets: currentUserData?.categoryBudgets || {},
+      projects: currentUserData?.projects || [],
+      initialSavings: currentUserData?.initialSavings || 0,
     });
   } catch (error) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
@@ -172,6 +188,29 @@ export async function POST(request: Request) {
       }
 
       allData.users[idx].categoryBudgets = categoryBudgets;
+      await putAllData(allData);
+      return NextResponse.json({ success: true });
+    }
+
+    // --- CAS 1quater : GESTION DES PROJETS & DU SOLDE INITIAL ---
+    if (body.isProjectUpdate) {
+      const { username, projects, initialSavings } = body as {
+        username: string;
+        projects?: Project[];
+        initialSavings?: number;
+      };
+      const idx = allData.users.findIndex(u => u.username === username);
+
+      if (idx === -1) {
+        return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
+      }
+
+      if (Array.isArray(projects)) {
+        allData.users[idx].projects = projects;
+      }
+      if (typeof initialSavings === "number") {
+        allData.users[idx].initialSavings = initialSavings;
+      }
       await putAllData(allData);
       return NextResponse.json({ success: true });
     }
