@@ -214,6 +214,10 @@ export default function ExpenseTracker() {
   const [newMonthSalary, setNewMonthSalary] = useState("")
   const [isNewMonthDialogOpen, setIsNewMonthDialogOpen] = useState(false)
 
+  // Formulaire : Corriger la date du mois
+  const [isEditMonthOpen, setIsEditMonthOpen] = useState(false)
+  const [editMonthInput, setEditMonthInput] = useState("")
+
   // Configuration des catégories (catégories par défaut + catégories personnalisées de l'utilisateur)
   const defaultCategories: Category[] = [
     { id: "alimentation", name: "Alimentation", color: COLORS[0] },
@@ -309,7 +313,7 @@ export default function ExpenseTracker() {
       if (!res.ok) throw new Error("Erreur lors du chargement")
       
       const data: AllData = await res.json()
-      setAllMonths(data.months.map((m) => m.month))
+      setAllMonths(data.months.map((m) => m.month).sort())
       setAllExpensesHistory(data.months.flatMap((m) => m.expenses))
       setAllMonthsData(data.months)
       setCustomCategories(data.customCategories || [])
@@ -466,6 +470,65 @@ export default function ExpenseTracker() {
        } else {
          toast({ title: "Erreur suppression", variant: "destructive" })
        }
+    }
+  }
+
+  // Corriger la date (YYYY-MM) du mois sélectionné : on recrée le mois sous la
+  // nouvelle date avec les mêmes données, puis on supprime l'ancien.
+  async function renameMonth(e: FormEvent) {
+    e.preventDefault()
+    if (!month || !currentUser) return
+
+    const target = editMonthInput.trim()
+    if (!/^\d{4}-\d{2}$/.test(target)) {
+      toast({ title: "Format invalide", description: "Utilisez YYYY-MM (ex : 2026-09).", variant: "destructive" })
+      return
+    }
+    if (target === month) {
+      setIsEditMonthOpen(false)
+      return
+    }
+    if (allMonths.includes(target)) {
+      toast({ title: "Mois déjà existant", description: `${target} existe déjà.`, variant: "destructive" })
+      return
+    }
+
+    try {
+      setIsLoading(true)
+      // 1. Créer/écraser le mois sous la nouvelle date avec les données actuelles
+      const createRes = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          user: currentUser,
+          month: target,
+          salary: parseFloat(salary) || 0,
+          expenses,
+          fixedExpenses,
+          savingsGoal: parseFloat(savingsGoalInput) || 0,
+        }),
+      })
+      if (!createRes.ok) throw new Error("create")
+
+      // 2. Supprimer l'ancien mois
+      const delRes = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, { method: "DELETE" })
+      if (!delRes.ok) throw new Error("delete")
+
+      // 3. Reporter la référence du solde de départ si elle pointait sur l'ancien mois
+      if (initialSavingsMonth === month) {
+        await saveProjects(projects, initialSavings, target)
+        setInitialSavingsMonth(target)
+      }
+
+      toast({ title: "Date du mois corrigée", description: `${month} → ${target}` })
+      setMonth(target)
+      setIsEditMonthOpen(false)
+      await fetchAllMonths()
+    } catch (error) {
+      console.error(error)
+      toast({ title: "Erreur lors de la modification", variant: "destructive" })
+    } finally {
+      setIsLoading(false)
     }
   }
 
@@ -1117,10 +1180,53 @@ export default function ExpenseTracker() {
                 </Select>
 
                 {month && (
-                    <Button 
-                      variant="ghost" 
-                      size="icon" 
-                      className="h-8 w-8 text-slate-400 hover:text-red-500" 
+                    <Dialog
+                      open={isEditMonthOpen}
+                      onOpenChange={(open) => {
+                        setIsEditMonthOpen(open)
+                        if (open) setEditMonthInput(month)
+                      }}
+                    >
+                        <DialogTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-slate-400 hover:text-slate-900"
+                            title="Corriger la date du mois"
+                          >
+                              <Edit className="h-4 w-4" />
+                          </Button>
+                        </DialogTrigger>
+                        <DialogContent>
+                            <DialogHeader>
+                              <DialogTitle>Corriger la date du mois</DialogTitle>
+                              <DialogDescription>
+                                Modifie l'année/le mois de cette fiche. Les données (salaire, dépenses, charges) sont conservées.
+                              </DialogDescription>
+                            </DialogHeader>
+                            <form onSubmit={renameMonth} className="space-y-4 pt-2">
+                                <div className="space-y-2">
+                                  <Label>Mois (YYYY-MM)</Label>
+                                  <Input
+                                    placeholder="2026-09"
+                                    value={editMonthInput}
+                                    onChange={e => setEditMonthInput(e.target.value)}
+                                    autoFocus
+                                  />
+                                </div>
+                                <Button type="submit" className="w-full bg-slate-900" disabled={isLoading}>
+                                  Enregistrer la correction
+                                </Button>
+                            </form>
+                        </DialogContent>
+                    </Dialog>
+                )}
+
+                {month && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 text-slate-400 hover:text-red-500"
                       onClick={deleteMonth}
                     >
                         <Trash2 className="h-4 w-4" />
