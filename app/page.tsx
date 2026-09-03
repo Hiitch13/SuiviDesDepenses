@@ -856,20 +856,6 @@ export default function ExpenseTracker() {
     netByMonth.set(m.month, net)
   })
 
-  // On repart TOUJOURS du mois en cours : le solde de départ saisi représente
-  // l'épargne réelle d'aujourd'hui. L'historique des mois passés n'est pas cumulé.
-  const startMonth = currentMonthStr
-
-  // Épargne mensuelle moyenne pour extrapoler les mois à venir, estimée
-  // uniquement sur les mois >= mois en cours qui ont déjà des données.
-  const futureRecorded = [...netByMonth.keys()].filter(mo => mo >= startMonth).sort()
-  const avgNet =
-    futureRecorded.length > 0
-      ? futureRecorded.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / futureRecorded.length
-      : 0
-
-  const includedProjects = projects.filter(p => p.included)
-
   // Ajoute n mois à une chaîne "YYYY-MM"
   function addMonths(ym: string, n: number): string {
     const [y, mo] = ym.split("-").map(Number)
@@ -877,36 +863,65 @@ export default function ExpenseTracker() {
     return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}`
   }
 
-  // Fin de la timeline : mois en cours -> dernier mois avec données / dernière
+  const includedProjects = projects.filter(p => p.included)
+  const hasStartingBalance = initialSavings > 0
+
+  // DEUX MODES DE DÉPART :
+  //  - Solde de départ renseigné : on ancre au MOIS EN COURS avec ce solde et on
+  //    ignore l'historique d'épargne (le solde est "à jour" aujourd'hui).
+  //  - Sinon : on ancre au MOIS PRÉCÉDENT avec le CUMUL de toutes les dépenses
+  //    de catégorie "Epargne" enregistrées, puis on projette à partir de là.
+  let anchorMonth: string
+  let anchorBalance: number
+  let avgNet: number
+
+  if (hasStartingBalance) {
+    anchorMonth = currentMonthStr
+    anchorBalance = initialSavings
+    // Extrapolation basée uniquement sur l'épargne des mois strictement futurs
+    // (on oublie le passé quand un solde de départ est donné).
+    const future = [...netByMonth.keys()].filter(mo => mo > currentMonthStr)
+    avgNet = future.length > 0
+      ? future.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / future.length
+      : 0
+  } else {
+    anchorMonth = addMonths(currentMonthStr, -1)
+    // Cumul de toute l'épargne déjà enregistrée
+    anchorBalance = [...netByMonth.values()].reduce((s, n) => s + n, 0)
+    const all = [...netByMonth.keys()]
+    avgNet = all.length > 0 ? anchorBalance / all.length : 0
+  }
+
+  // Fin de la timeline : de l'ancre jusqu'au dernier mois avec données / dernière
   // échéance de projet inclus (les échéances passées sont ignorées).
   const endCandidates = [
-    startMonth,
-    ...futureRecorded,
-    ...includedProjects.map(p => p.targetMonth).filter(mo => mo >= startMonth),
+    anchorMonth,
+    currentMonthStr,
+    ...[...netByMonth.keys()].filter(mo => mo >= anchorMonth),
+    ...includedProjects.map(p => p.targetMonth).filter(mo => mo >= currentMonthStr),
   ].sort()
   const endMonth = endCandidates[endCandidates.length - 1]
 
   // Projets inclus (échéance >= mois en cours) regroupés par mois d'échéance
   const projectsByMonth = new Map<string, Project[]>()
   includedProjects.forEach(p => {
-    if (p.targetMonth < startMonth) return
+    if (p.targetMonth < currentMonthStr) return
     const arr = projectsByMonth.get(p.targetMonth) || []
     arr.push(p)
     projectsByMonth.set(p.targetMonth, arr)
   })
 
-  // Simulation mois par mois du solde d'épargne cumulé, en partant du solde de
-  // départ au mois en cours. L'épargne du mois en cours n'est pas ré-ajoutée :
-  // le solde de départ est considéré "à jour" à cette date.
+  // Simulation mois par mois du solde d'épargne cumulé à partir de l'ancre.
+  // L'épargne du mois d'ancrage n'est pas ré-ajoutée (le solde est "à jour").
   const projectionData: { month: string; solde: number; projected: boolean }[] = []
   const projectFeasibility = new Map<string, boolean>()
-  let runningBalance = initialSavings
+  let runningBalance = anchorBalance
   {
-    let cursor = startMonth
+    let cursor = anchorMonth
     let guard = 0
     while (cursor <= endMonth && guard < 600) {
       const isRecorded = netByMonth.has(cursor)
-      if (cursor !== startMonth) {
+      if (cursor !== anchorMonth) {
         runningBalance += isRecorded ? (netByMonth.get(cursor) as number) : avgNet
       }
       // On règle les projets échéant ce mois-ci
@@ -918,15 +933,15 @@ export default function ExpenseTracker() {
       projectionData.push({
         month: cursor,
         solde: Math.round(runningBalance * 100) / 100,
-        projected: cursor !== startMonth && !isRecorded,
+        projected: cursor !== anchorMonth && !isRecorded,
       })
       cursor = addMonths(cursor, 1)
       guard++
     }
   }
 
-  // Épargne actuelle = solde de départ saisi (on repart de zéro au mois en cours)
-  const currentSavings = initialSavings
+  // Épargne "actuelle" = solde à l'ancrage (solde de départ, ou cumul de l'épargne passée)
+  const currentSavings = anchorBalance
   const projectedFinalSavings =
     projectionData.length > 0 ? projectionData[projectionData.length - 1].solde : currentSavings
   const hasNegativeProjection = projectionData.some(p => p.solde < 0)
@@ -1682,15 +1697,17 @@ export default function ExpenseTracker() {
 
                         <Card className="shadow-sm border-slate-200">
                             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium text-slate-500">Épargne moy. / mois</CardTitle>
+                                <CardTitle className="text-sm font-medium text-slate-500">Épargne actuelle</CardTitle>
                                 <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center">
                                   <TrendingUp className="h-4 w-4 text-emerald-600" />
                                 </div>
                             </CardHeader>
                             <CardContent>
-                                <div className="text-2xl font-bold text-slate-900">{avgNet.toFixed(2)} €</div>
+                                <div className={`text-2xl font-bold ${currentSavings < 0 ? 'text-red-600' : 'text-slate-900'}`}>
+                                  {currentSavings.toFixed(2)} €
+                                </div>
                                 <p className="text-xs text-slate-500 mt-1">
-                                  Estimée (catégorie « Epargne »)
+                                  {hasStartingBalance ? `Solde de départ (${anchorMonth})` : `Cumul épargne au ${anchorMonth}`}
                                 </p>
                             </CardContent>
                         </Card>
