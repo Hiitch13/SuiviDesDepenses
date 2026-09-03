@@ -43,8 +43,11 @@ type User = {
   categoryBudgets?: Record<string, number>;
   // Projets / achats / voyages planifiés (transversaux aux mois)
   projects?: Project[];
-  // Solde d'épargne initial avant le premier mois suivi
+  // Solde d'épargne de référence saisi manuellement
   initialSavings?: number;
+  // Mois ("YYYY-MM") auquel le solde de référence a été renseigné pour la
+  // dernière fois : l'épargne n'est cumulée qu'à partir de ce mois.
+  initialSavingsMonth?: string;
 };
 
 type MonthData = {
@@ -133,6 +136,7 @@ export async function GET(request: Request) {
       categoryBudgets: currentUserData?.categoryBudgets || {},
       projects: currentUserData?.projects || [],
       initialSavings: currentUserData?.initialSavings || 0,
+      initialSavingsMonth: currentUserData?.initialSavingsMonth || "",
     });
   } catch (error) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
@@ -194,10 +198,11 @@ export async function POST(request: Request) {
 
     // --- CAS 1quater : GESTION DES PROJETS & DU SOLDE INITIAL ---
     if (body.isProjectUpdate) {
-      const { username, projects, initialSavings } = body as {
+      const { username, projects, initialSavings, initialSavingsMonth } = body as {
         username: string;
         projects?: Project[];
         initialSavings?: number;
+        initialSavingsMonth?: string;
       };
       const idx = allData.users.findIndex(u => u.username === username);
 
@@ -210,6 +215,9 @@ export async function POST(request: Request) {
       }
       if (typeof initialSavings === "number") {
         allData.users[idx].initialSavings = initialSavings;
+      }
+      if (typeof initialSavingsMonth === "string") {
+        allData.users[idx].initialSavingsMonth = initialSavingsMonth;
       }
       await putAllData(allData);
       return NextResponse.json({ success: true });

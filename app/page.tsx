@@ -140,6 +140,7 @@ type AllData = {
   categoryBudgets?: Record<string, number>
   projects?: Project[]
   initialSavings?: number
+  initialSavingsMonth?: string
 }
 
 export default function ExpenseTracker() {
@@ -190,6 +191,7 @@ export default function ExpenseTracker() {
   const [projects, setProjects] = useState<Project[]>([])
   const [initialSavings, setInitialSavings] = useState<number>(0)
   const [initialSavingsInput, setInitialSavingsInput] = useState("0")
+  const [initialSavingsMonth, setInitialSavingsMonth] = useState<string>("")
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectAmount, setNewProjectAmount] = useState("")
   const [newProjectMonth, setNewProjectMonth] = useState("")
@@ -315,6 +317,7 @@ export default function ExpenseTracker() {
       setProjects(data.projects || [])
       setInitialSavings(data.initialSavings || 0)
       setInitialSavingsInput((data.initialSavings || 0).toString())
+      setInitialSavingsMonth(data.initialSavingsMonth || "")
     } catch (error) { 
       console.error(error) 
     } finally { 
@@ -623,7 +626,11 @@ export default function ExpenseTracker() {
   // ==========================================
   // 6ter. GESTION DES PROJETS & DU SOLDE INITIAL
   // ==========================================
-  async function saveProjects(newProjects: Project[], newInitialSavings: number = initialSavings) {
+  async function saveProjects(
+    newProjects: Project[],
+    newInitialSavings: number = initialSavings,
+    newInitialSavingsMonth: string = initialSavingsMonth
+  ) {
     if (!currentUser) return false
     try {
       const res = await fetch("/api/expenses", {
@@ -634,6 +641,7 @@ export default function ExpenseTracker() {
           username: currentUser,
           projects: newProjects,
           initialSavings: newInitialSavings,
+          initialSavingsMonth: newInitialSavingsMonth,
         }),
       })
       return res.ok
@@ -693,9 +701,14 @@ export default function ExpenseTracker() {
 
   async function saveInitialSavings() {
     const value = parseFloat(initialSavingsInput) || 0
-    if (await saveProjects(projects, value)) {
+    // On horodate le solde au mois courant : l'épargne ne sera cumulée
+    // qu'à partir de ce mois-là.
+    const nowDate = new Date()
+    const refMonth = `${nowDate.getFullYear()}-${(nowDate.getMonth() + 1).toString().padStart(2, "0")}`
+    if (await saveProjects(projects, value, refMonth)) {
       setInitialSavings(value)
-      toast({ title: "Solde de départ mis à jour" })
+      setInitialSavingsMonth(refMonth)
+      toast({ title: `Solde de départ enregistré (référence ${refMonth})` })
     } else {
       toast({ title: "Erreur d'enregistrement", variant: "destructive" })
     }
@@ -864,33 +877,32 @@ export default function ExpenseTracker() {
   }
 
   const includedProjects = projects.filter(p => p.included)
-  const hasStartingBalance = initialSavings > 0
+  const hasStartingBalance = initialSavings > 0 && !!initialSavingsMonth
 
-  // DEUX MODES DE DÉPART :
-  //  - Solde de départ renseigné : on ancre au MOIS EN COURS avec ce solde et on
-  //    ignore l'historique d'épargne (le solde est "à jour" aujourd'hui).
-  //  - Sinon : on ancre au MOIS PRÉCÉDENT avec le CUMUL de toutes les dépenses
-  //    de catégorie "Epargne" enregistrées, puis on projette à partir de là.
+  // ANCRAGE DATÉ DU SOLDE DE DÉPART :
+  // Le solde de départ est daté du mois où il a été renseigné pour la dernière
+  // fois (initialSavingsMonth). On ancre la projection à ce mois, avec ce solde,
+  // puis on ajoute UNIQUEMENT l'épargne (catégorie "Epargne") des mois SUIVANTS.
+  // Ainsi : "solde de départ + épargne depuis le mois du solde renseigné".
+  // Si aucun solde n'a jamais été renseigné, on repart du 1er mois connu à 0.
   let anchorMonth: string
   let anchorBalance: number
-  let avgNet: number
 
   if (hasStartingBalance) {
-    anchorMonth = currentMonthStr
+    anchorMonth = initialSavingsMonth
     anchorBalance = initialSavings
-    // Extrapolation basée uniquement sur l'épargne des mois strictement futurs
-    // (on oublie le passé quand un solde de départ est donné).
-    const future = [...netByMonth.keys()].filter(mo => mo > currentMonthStr)
-    avgNet = future.length > 0
-      ? future.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / future.length
-      : 0
   } else {
-    anchorMonth = addMonths(currentMonthStr, -1)
-    // Cumul de toute l'épargne déjà enregistrée
-    anchorBalance = [...netByMonth.values()].reduce((s, n) => s + n, 0)
-    const all = [...netByMonth.keys()]
-    avgNet = all.length > 0 ? anchorBalance / all.length : 0
+    const recorded = [...netByMonth.keys()].sort()
+    anchorMonth = recorded.length > 0 ? addMonths(recorded[0], -1) : addMonths(currentMonthStr, -1)
+    anchorBalance = 0
   }
+
+  // Épargne mensuelle moyenne pour extrapoler les mois à venir, estimée sur les
+  // mois enregistrés situés APRÈS l'ancre (fenêtre d'observation réelle).
+  const observedAfterAnchor = [...netByMonth.keys()].filter(mo => mo > anchorMonth)
+  const avgNet = observedAfterAnchor.length > 0
+    ? observedAfterAnchor.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / observedAfterAnchor.length
+    : 0
 
   // Fin de la timeline : de l'ancre jusqu'au dernier mois avec données / dernière
   // échéance de projet inclus (les échéances passées sont ignorées).
@@ -921,8 +933,13 @@ export default function ExpenseTracker() {
     let guard = 0
     while (cursor <= endMonth && guard < 600) {
       const isRecorded = netByMonth.has(cursor)
+      // On n'extrapole (avgNet) que les mois STRICTEMENT futurs. Le mois en cours
+      // et les mois passés sans donnée valent 0 (épargne réellement enregistrée).
+      const isFuture = cursor > currentMonthStr
       if (cursor !== anchorMonth) {
-        runningBalance += isRecorded ? (netByMonth.get(cursor) as number) : avgNet
+        runningBalance += isRecorded
+          ? (netByMonth.get(cursor) as number)
+          : (isFuture ? avgNet : 0)
       }
       // On règle les projets échéant ce mois-ci
       const due = projectsByMonth.get(cursor) || []
@@ -933,15 +950,17 @@ export default function ExpenseTracker() {
       projectionData.push({
         month: cursor,
         solde: Math.round(runningBalance * 100) / 100,
-        projected: cursor !== anchorMonth && !isRecorded,
+        projected: isFuture && !isRecorded,
       })
       cursor = addMonths(cursor, 1)
       guard++
     }
   }
 
-  // Épargne "actuelle" = solde à l'ancrage (solde de départ, ou cumul de l'épargne passée)
-  const currentSavings = anchorBalance
+  // Épargne "actuelle" = solde de départ + épargne cumulée jusqu'au mois en cours
+  // (soit la valeur de la projection au mois courant).
+  const currentPoint = projectionData.find(p => p.month === currentMonthStr)
+  const currentSavings = currentPoint ? currentPoint.solde : anchorBalance
   const projectedFinalSavings =
     projectionData.length > 0 ? projectionData[projectionData.length - 1].solde : currentSavings
   const hasNegativeProjection = projectionData.some(p => p.solde < 0)
@@ -1691,7 +1710,9 @@ export default function ExpenseTracker() {
                                       <Edit className="h-4 w-4"/>
                                     </Button>
                                 </div>
-                                <p className="text-xs text-slate-500 mt-2">Épargne avant le 1er mois suivi</p>
+                                <p className="text-xs text-slate-500 mt-2">
+                                  Votre épargne réelle aujourd'hui{initialSavingsMonth ? ` (réf. ${initialSavingsMonth})` : ""}
+                                </p>
                             </CardContent>
                         </Card>
 
@@ -1707,7 +1728,9 @@ export default function ExpenseTracker() {
                                   {currentSavings.toFixed(2)} €
                                 </div>
                                 <p className="text-xs text-slate-500 mt-1">
-                                  {hasStartingBalance ? `Solde de départ (${anchorMonth})` : `Cumul épargne au ${anchorMonth}`}
+                                  {hasStartingBalance
+                                    ? `Départ ${anchorMonth} + épargne depuis`
+                                    : "Cumul de l'épargne enregistrée"}
                                 </p>
                             </CardContent>
                         </Card>
@@ -1746,8 +1769,10 @@ export default function ExpenseTracker() {
                         <CardHeader>
                             <CardTitle>Projection de l'épargne</CardTitle>
                             <CardDescription>
-                              Épargne cumulée (catégorie « Epargne ») mois par mois. Les projets « inclus » sont déduits à leur échéance.
-                              Les mois à venir sont extrapolés à partir de votre épargne moyenne ({avgNet.toFixed(0)} €/mois).
+                              {hasStartingBalance
+                                ? `Solde de départ (${anchorMonth}) + épargne « Epargne » des mois suivants. `
+                                : "Cumul de l'épargne « Epargne » mois par mois. "}
+                              Les projets « inclus » sont déduits à leur échéance ; les mois à venir sont extrapolés à partir de votre épargne moyenne ({avgNet.toFixed(0)} €/mois).
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="h-[320px]">
