@@ -165,7 +165,8 @@ export default function ExpenseTracker() {
 
   // Données Globales
   const [allMonths, setAllMonths] = useState<string[]>([])
-  const [allExpensesHistory, setAllExpensesHistory] = useState<Expense[]>([])
+  // Tous les mois de l'utilisateur (suggestions rapides, projection d'épargne) : après une
+  // sauvegarde on remplace uniquement le mois courant au lieu de tout recharger depuis l'API.
   const [allMonthsData, setAllMonthsData] = useState<MonthData[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
@@ -327,7 +328,6 @@ export default function ExpenseTracker() {
       
       const data: AllData = await res.json()
       setAllMonths(data.months.map((m) => m.month).sort())
-      setAllExpensesHistory(data.months.flatMap((m) => m.expenses))
       setAllMonthsData(data.months)
       setCustomCategories(data.customCategories || [])
       setCategoryBudgets(data.categoryBudgets || {})
@@ -406,15 +406,33 @@ export default function ExpenseTracker() {
         }),
       })
 
-      if (!response.ok) throw new Error("Erreur sauvegarde")
-      
-      await fetchAllMonths()
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || "La sauvegarde a échoué.")
+      }
+
+      // Le serveur a accepté exactement ce qu'on lui a envoyé : inutile de recharger tous
+      // les mois (un aller-retour de plus), on remplace le mois courant localement.
+      const savedMonth: MonthData = {
+        user: currentUser,
+        month: newMonth,
+        salary: newSalary,
+        expenses: newExpenses,
+        fixedExpenses: newFixedExpenses,
+        savingsGoal: newSavingsGoal,
+        extraIncomes: newExtraIncomes,
+      }
+      setAllMonthsData(prev =>
+        prev.some(m => m.month === newMonth)
+          ? prev.map(m => (m.month === newMonth ? savedMonth : m))
+          : [...prev, savedMonth]
+      )
       return true
     } catch (error) {
       console.error(error)
       toast({ 
         title: "Erreur", 
-        description: "La sauvegarde a échoué.", 
+        description: error instanceof Error ? error.message : "La sauvegarde a échoué.", 
         variant: "destructive" 
       })
       return false
@@ -451,20 +469,31 @@ export default function ExpenseTracker() {
       fixedExpenses: [] 
     }
 
-    const response = await fetch("/api/expenses", { 
-      method: "POST", 
-      headers: { "Content-Type": "application/json" }, 
-      body: JSON.stringify(monthData) 
-    })
+    try {
+      const response = await fetch("/api/expenses", { 
+        method: "POST", 
+        headers: { "Content-Type": "application/json" }, 
+        body: JSON.stringify(monthData) 
+      })
 
-    if (response.ok) {
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || "Erreur lors de la création")
+      }
+
       toast({ title: "Nouveau mois créé !" })
+      // Ici le rechargement est nécessaire : le serveur remplit les charges fixes par défaut
       await fetchAllMonths()
       setNewMonthInput("")
       setNewMonthSalary("")
       setIsNewMonthDialogOpen(false)
-    } else {
-      toast({ title: "Erreur lors de la création", variant: "destructive" }) 
+    } catch (error) {
+      console.error(error)
+      toast({ 
+        title: "Erreur lors de la création", 
+        description: error instanceof Error ? error.message : "Impossible de joindre le serveur.", 
+        variant: "destructive" 
+      })
     }
   }
 
@@ -951,7 +980,7 @@ export default function ExpenseTracker() {
   // chacune ne comptant alors qu'une fois — ce qui laissait un achat ponctuel arriver à égalité
   // et gagner par hasard d'ordre. Le montant le plus récent est conservé pour le relog rapide.
   const expenseFrequency = new Map<string, { amount: number; description: string; category: string; count: number; lastDate: string }>()
-  allExpensesHistory.forEach(e => {
+  allMonthsData.flatMap(m => m.expenses).forEach(e => {
     const key = `${e.category}|${e.description}`
     const existing = expenseFrequency.get(key)
     if (existing) {

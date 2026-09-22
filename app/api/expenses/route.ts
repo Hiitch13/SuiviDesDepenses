@@ -82,13 +82,39 @@ const binId = "67f25abc8561e97a50f9a5ff"; // Ton ID
 const apiKey = process.env.JSONBIN_API_KEY || "TA_CLE_API";
 
 // === Fonctions d'accès à JSONBin ===
+
+// JSONBin est le seul stockage de l'app : s'il répond lentement ou tombe (502/504 côté
+// hébergeur, connexion impossible...), tout est bloqué. On borne donc chaque appel dans le
+// temps, on réessaie une fois les lectures en cas d'erreur transitoire, et on remonte une
+// erreur typée pour renvoyer un 503 explicite plutôt qu'un 500 muet.
+const JSONBIN_TIMEOUT_MS = 8000;
+
+class StorageError extends Error {
+  constructor(message: string, public status?: number) {
+    super(message);
+  }
+}
+
+async function fetchJsonBin(url: string, init: RequestInit, retries: number): Promise<Response> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetch(url, { ...init, signal: AbortSignal.timeout(JSONBIN_TIMEOUT_MS) });
+      // 5xx = problème côté JSONBin, ça vaut le coup de réessayer ; 4xx = erreur de config, inutile
+      if (response.status >= 500 && attempt < retries) continue;
+      return response;
+    } catch (error) {
+      if (attempt >= retries) throw new StorageError(`JSONBin injoignable (${(error as Error).name})`);
+    }
+  }
+}
+
 async function getAllData(): Promise<AllData> {
-  const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
-    method: "GET",
-    headers: { "X-Master-Key": apiKey },
-    cache: "no-store",
-  });
-  if (!response.ok) throw new Error("Erreur lecture DB");
+  const response = await fetchJsonBin(
+    `https://api.jsonbin.io/v3/b/${binId}/latest`,
+    { method: "GET", headers: { "X-Master-Key": apiKey }, cache: "no-store" },
+    1
+  );
+  if (!response.ok) throw new StorageError("Erreur lecture DB", response.status);
   
   const json = await response.json();
   const record = json.record as AllData;
@@ -99,14 +125,36 @@ async function getAllData(): Promise<AllData> {
 }
 
 async function putAllData(data: AllData): Promise<void> {
-  await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Master-Key": apiKey,
+  // Pas de retry sur l'écriture : une PUT qui a abouti côté JSONBin mais dont la réponse
+  // s'est perdue serait rejouée sans dommage (même contenu), mais on préfère rester simple
+  // et laisser l'utilisateur relancer depuis l'UI avec un message clair.
+  const response = await fetchJsonBin(
+    `https://api.jsonbin.io/v3/b/${binId}`,
+    {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Master-Key": apiKey,
+      },
+      body: JSON.stringify(data),
     },
-    body: JSON.stringify(data),
-  });
+    0
+  );
+  // Avant, une PUT en échec était ignorée : l'API répondait "success" alors que rien
+  // n'était enregistré. On refuse désormais de mentir au client.
+  if (!response.ok) throw new StorageError("Erreur écriture DB", response.status);
+}
+
+function errorResponse(error: unknown) {
+  if (error instanceof StorageError) {
+    console.error(`[JSONBin] ${error.message}${error.status ? ` (HTTP ${error.status})` : ""}`);
+    return NextResponse.json(
+      { error: "Le service de stockage ne répond pas. Réessayez dans quelques instants." },
+      { status: 503 }
+    );
+  }
+  console.error(error);
+  return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
 }
 
 // === GET (Récupérer les mois d'un user) ===
@@ -138,8 +186,9 @@ export async function GET(request: Request) {
 
     const currentUserData = allData.users.find(u => u.username === userParam);
     const userMonths = allData.months.filter((m) => m.user === userParam);
+    // On ne renvoie que ce qui concerne cet utilisateur : surtout pas `allData.users`,
+    // qui contient les mots de passe de tous les comptes.
     return NextResponse.json({
-      ...allData,
       months: userMonths,
       customCategories: currentUserData?.customCategories || [],
       categoryBudgets: currentUserData?.categoryBudgets || {},
@@ -148,7 +197,7 @@ export async function GET(request: Request) {
       initialSavingsMonth: currentUserData?.initialSavingsMonth || "",
     });
   } catch (error) {
-    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
@@ -279,8 +328,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
+    return errorResponse(error);
   }
 }
 
@@ -305,6 +353,6 @@ export async function DELETE(request: Request) {
 
     return NextResponse.json({ success: true })
   } catch (error) {
-    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 })
+    return errorResponse(error)
   }
 }
