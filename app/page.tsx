@@ -46,6 +46,15 @@ import {
   toCsv,
   weeklyPacing,
 } from "@/lib/budget"
+import {
+  type Household,
+  type HouseholdMonth,
+  type Invite,
+  type SharedExpense,
+  householdTotal,
+  settle,
+  sharedSpendByCategory,
+} from "@/lib/household"
 import { dayLabel, euros, eurosRound, initials, monthLabel, ofMonth } from "@/lib/format"
 
 // Styles de champ partagés : les champs natifs restent plus fiables au doigt
@@ -133,6 +142,17 @@ export default function Thrift() {
   const [isEditMonthOpen, setIsEditMonthOpen] = useState(false)
   const [editMonthInput, setEditMonthInput] = useState("")
   const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false)
+
+  // Foyer
+  const [view, setView] = useState<"moi" | "foyer">("moi")
+  const [household, setHousehold] = useState<Household | null>(null)
+  const [invites, setInvites] = useState<Invite[]>([])
+  const [pendingInvites, setPendingInvites] = useState<string[]>([])
+  const [householdMonths, setHouseholdMonths] = useState<HouseholdMonth[]>([])
+  const [newHouseholdName, setNewHouseholdName] = useState("")
+  const [inviteName, setInviteName] = useState("")
+  // Qui paie la dépense en cours de saisie, quand elle est pour le foyer.
+  const [paidBy, setPaidBy] = useState("")
 
   // Recherche et filtres de l'historique
   const [query, setQuery] = useState("")
@@ -240,6 +260,22 @@ export default function Thrift() {
     }
   }
 
+  async function fetchHousehold() {
+    try {
+      const res = await fetch("/api/household")
+      if (!res.ok) return
+      const data = await res.json()
+      setHousehold(data.household)
+      setInvites(data.invites ?? [])
+      setPendingInvites(data.pendingInvites ?? [])
+      setHouseholdMonths(data.months ?? [])
+      // Sans foyer, la vue partagée n'a rien à montrer.
+      if (!data.household) setView("moi")
+    } catch (error) {
+      console.error(error)
+    }
+  }
+
   async function fetchMonthData(selectedMonth: string) {
     if (!currentUser) return
     try {
@@ -264,7 +300,10 @@ export default function Thrift() {
   }
 
   useEffect(() => {
-    if (currentUser) fetchAllMonths()
+    if (currentUser) {
+      fetchAllMonths()
+      fetchHousehold()
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser])
 
@@ -548,19 +587,21 @@ export default function Thrift() {
     return false
   }
 
-  function openExpenseSheet(expense?: Expense) {
+  function openExpenseSheet(expense?: Expense | SharedExpense) {
     if (expense) {
-      setEditingExpense(expense)
+      setEditingExpense(expense as Expense)
       setAmount(String(expense.amount))
       setDescription(expense.description)
       setCategory(expense.category)
       setExpenseDate(expense.date)
+      setPaidBy("paidBy" in expense ? expense.paidBy : (currentUser ?? ""))
     } else {
       setEditingExpense(null)
       setAmount("")
       setDescription("")
       setCategory("alimentation")
       setExpenseDate(defaultDateFor(month))
+      setPaidBy(currentUser ?? "")
     }
     setIsQuickAddOpen(true)
   }
@@ -571,6 +612,45 @@ export default function Thrift() {
 
     const value = parseFloat(amount)
     if (Number.isNaN(value)) return
+
+    // --- Dépense du foyer ---
+    if (isShared && currentHouseholdMonth) {
+      const label = description.trim() || categories.find((c) => c.id === category)?.name || "Dépense"
+      const payer = paidBy || currentUser || ""
+
+      const next: HouseholdMonth = editingExpense
+        ? {
+            ...currentHouseholdMonth,
+            expenses: currentHouseholdMonth.expenses.map((x) =>
+              x.id === editingExpense.id
+                ? { ...x, amount: value, description: label, category, date: expenseDate || x.date, paidBy: payer }
+                : x
+            ),
+          }
+        : {
+            ...currentHouseholdMonth,
+            expenses: [
+              {
+                id: Date.now().toString(),
+                amount: value,
+                description: label,
+                category,
+                date: expenseDate || defaultDateFor(month),
+                paidBy: payer,
+              },
+              ...currentHouseholdMonth.expenses,
+            ],
+          }
+
+      if (await saveSharedMonth(next)) {
+        setIsQuickAddOpen(false)
+        setEditingExpense(null)
+        setAmount("")
+        setDescription("")
+        toast({ title: editingExpense ? "Dépense modifiée" : "Dépense notée pour le foyer" })
+      }
+      return
+    }
 
     if (editingExpense) {
       const updated = expenses.map((x) =>
@@ -873,7 +953,109 @@ export default function Thrift() {
   }
 
   // ==========================================
-  // 10. Export
+  // 10. Foyer
+  // ==========================================
+  async function householdAction(body: Record<string, unknown>, successTitle?: string) {
+    try {
+      setIsLoading(true)
+      const res = await fetch("/api/household", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "L\u2019action a échoué.")
+      await fetchHousehold()
+      if (successTitle) toast({ title: successTitle })
+      return true
+    } catch (error) {
+      console.error(error)
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "L\u2019action a échoué.",
+        variant: "destructive",
+      })
+      return false
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function createHouseholdFn(e: FormEvent) {
+    e.preventDefault()
+    if (!newHouseholdName.trim()) return
+    if (await householdAction({ action: "create", name: newHouseholdName.trim() }, "Foyer créé")) {
+      setNewHouseholdName("")
+      setView("foyer")
+    }
+  }
+
+  async function inviteMember(e: FormEvent) {
+    e.preventDefault()
+    if (!inviteName.trim()) return
+    if (await householdAction({ action: "invite", username: inviteName.trim() }, `${inviteName.trim()} est invité`)) {
+      setInviteName("")
+    }
+  }
+
+  async function leaveHouseholdFn() {
+    if (!household) return
+    const last = household.members.length === 1
+    const message = last
+      ? `Tu es seul dans « ${household.name} » : le quitter supprimera définitivement ses dépenses partagées. Continuer ?`
+      : `Quitter « ${household.name} » ? Tu ne verras plus ses dépenses partagées.`
+    if (!confirm(message)) return
+    if (await householdAction({ action: "leave" }, "Foyer quitté")) setView("moi")
+  }
+
+  /** Enregistre le mois partagé et met à jour la copie locale. */
+  async function saveSharedMonth(next: HouseholdMonth) {
+    if (!household) return false
+    try {
+      setIsLoading(true)
+      const res = await fetch("/api/household", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "saveMonth",
+          month: next.month,
+          expenses: next.expenses,
+          fixedExpenses: next.fixedExpenses,
+        }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.error || "La sauvegarde a échoué.")
+
+      setHouseholdMonths((prev) =>
+        prev.some((m) => m.month === next.month)
+          ? prev.map((m) => (m.month === next.month ? next : m))
+          : [...prev, next]
+      )
+      return true
+    } catch (error) {
+      console.error(error)
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "La sauvegarde a échoué.",
+        variant: "destructive",
+      })
+      return false
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  async function deleteSharedExpense(id: string) {
+    if (!currentHouseholdMonth) return
+    const next = {
+      ...currentHouseholdMonth,
+      expenses: currentHouseholdMonth.expenses.filter((e) => e.id !== id),
+    }
+    if (await saveSharedMonth(next)) toast({ title: "Dépense supprimée" })
+  }
+
+  // ==========================================
+  // 11. Export
   // ==========================================
   function exportCsv() {
     const csv = toCsv(allMonthsData, categories)
@@ -889,7 +1071,7 @@ export default function Thrift() {
   }
 
   // ==========================================
-  // 11. Dérivés
+  // 12. Dérivés
   // ==========================================
   const totals = computeTotals({
     salary: parseFloat(salary) || 0,
@@ -946,6 +1128,23 @@ export default function Thrift() {
 
   const catById = (id: string) => categories.find((c) => c.id === id)
 
+  const memberNames = household?.members.map((m) => m.username) ?? []
+  const currentHouseholdMonth: HouseholdMonth | null = household
+    ? (householdMonths.find((m) => m.month === month) ?? {
+        householdId: household.id,
+        month,
+        expenses: [],
+        fixedExpenses: [],
+      })
+    : null
+  const settlement = currentHouseholdMonth ? settle(currentHouseholdMonth, memberNames) : null
+  const sharedTotal = currentHouseholdMonth ? householdTotal(currentHouseholdMonth) : 0
+  const sharedSpend = currentHouseholdMonth ? sharedSpendByCategory(currentHouseholdMonth) : {}
+  const sharedRows = categories
+    .filter((c) => c.id !== "epargne")
+    .map((c) => ({ category: c, spent: sharedSpend[c.id] || 0 }))
+  const isShared = view === "foyer" && !!household
+
   // Le mois réel n'existe pas encore, mais d'autres mois sont enregistrés :
   // sans ce rappel on atterrit sur le mois précédent sans comprendre pourquoi.
   const needsCurrentMonth = allMonths.length > 0 && !allMonths.includes(currentMonthStr) && !!month
@@ -995,8 +1194,222 @@ export default function Thrift() {
       </header>
 
       <main className="pb-dock mx-auto max-w-2xl">
+        {/* Bascule entre le budget personnel et celui du foyer. Elle ne sert
+            que sur l'écran du mois : ailleurs, tout est personnel. */}
+        {household && screen === "mois" && (
+          <div className="flex gap-1.5 px-4 pt-4">
+            {(["moi", "foyer"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className="flex-1 rounded-xl border py-2.5 text-sm font-semibold transition-colors"
+                style={{
+                  backgroundColor: view === v ? "var(--t-brass)" : "var(--t-pine)",
+                  borderColor: view === v ? "var(--t-brass)" : "var(--t-line)",
+                  color: view === v ? "var(--t-ink)" : "var(--t-mist)",
+                }}
+              >
+                {v === "moi" ? "Moi" : household.name}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* ===================== FOYER ===================== */}
+        {screen === "mois" && isShared && currentHouseholdMonth && settlement && (
+          <div className="space-y-4 px-4 pt-4">
+            <Panel>
+              <SectionTitle>{household!.name}</SectionTitle>
+              <p className="figure-hero text-[clamp(2.5rem,12vw,3.75rem)]" style={{ color: "var(--t-paper)" }}>
+                {euros(sharedTotal)}
+              </p>
+              <p className="mt-2 text-sm" style={{ color: "var(--t-sage)" }}>
+                dépensés ensemble en {monthLabel(month)}, charges fixes comprises.
+              </p>
+            </Panel>
+
+            <Panel>
+              <SectionTitle aside={`${memberNames.length} membres`}>Qui a payé quoi</SectionTitle>
+              <ul className="space-y-2.5">
+                {settlement.balances.map((b) => (
+                  <li key={b.username} className="flex items-baseline justify-between gap-3 text-sm">
+                    <span className="min-w-0 flex-1 truncate" style={{ color: "var(--t-paper)" }}>
+                      {b.username}
+                      {b.username === currentUser && (
+                        <span style={{ color: "var(--t-sage)" }}> (toi)</span>
+                      )}
+                    </span>
+                    <span className="tnum shrink-0" style={{ color: "var(--t-sage)" }}>
+                      a avancé {euros(b.paid)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+
+              <div className="mt-4 border-t pt-4" style={{ borderColor: "var(--t-line)" }}>
+                {settlement.transfers.length === 0 ? (
+                  <p className="text-sm" style={{ color: "var(--t-sage)" }}>
+                    {sharedTotal === 0
+                      ? "Rien de noté en commun ce mois-ci."
+                      : "Chacun a payé sa part, personne ne doit rien."}
+                  </p>
+                ) : (
+                  <ul className="space-y-2">
+                    {settlement.transfers.map((t) => (
+                      <li key={`${t.from}-${t.to}`} className="text-sm" style={{ color: "var(--t-paper)" }}>
+                        {t.to === currentUser ? (
+                          <>
+                            <span className="font-semibold">{t.from}</span> te doit{" "}
+                            <span className="tnum font-semibold" style={{ color: "var(--t-brass)" }}>
+                              {euros(t.amount)}
+                            </span>
+                          </>
+                        ) : t.from === currentUser ? (
+                          <>
+                            <span className="font-semibold">Tu dois</span>{" "}
+                            <span className="tnum font-semibold" style={{ color: "var(--t-brass)" }}>
+                              {euros(t.amount)}
+                            </span>{" "}
+                            à {t.to}
+                          </>
+                        ) : (
+                          <>
+                            <span className="font-semibold">{t.from}</span> doit{" "}
+                            <span className="tnum font-semibold" style={{ color: "var(--t-brass)" }}>
+                              {euros(t.amount)}
+                            </span>{" "}
+                            à {t.to}
+                          </>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </Panel>
+
+            <Panel>
+              <SectionTitle aside={euros(sharedTotal - currentHouseholdMonth.fixedExpenses.reduce((a, f) => a + f.amount, 0))}>
+                Où ça part
+              </SectionTitle>
+              <CategoryBars rows={sharedRows} />
+            </Panel>
+
+            <Panel flush>
+              <div className="px-4 pb-1 pt-3">
+                <SectionTitle
+                  aside={euros(currentHouseholdMonth.fixedExpenses.reduce((a, f) => a + f.amount, 0))}
+                >
+                  Charges fixes du foyer
+                </SectionTitle>
+              </div>
+              {currentHouseholdMonth.fixedExpenses.length === 0 ? (
+                <Empty title="Aucune charge commune">Loyer, internet, électricité…</Empty>
+              ) : (
+                currentHouseholdMonth.fixedExpenses.map((fx) => (
+                  <Row key={fx.id}>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm" style={{ color: "var(--t-paper)" }}>
+                        {fx.description}
+                      </span>
+                      <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                        payé par {fx.paidBy === currentUser ? "toi" : fx.paidBy}
+                      </span>
+                    </span>
+                    <Amount>{euros(fx.amount)}</Amount>
+                    <IconButton
+                      label={`Supprimer ${fx.description}`}
+                      danger
+                      onClick={() =>
+                        saveSharedMonth({
+                          ...currentHouseholdMonth,
+                          fixedExpenses: currentHouseholdMonth.fixedExpenses.filter((x) => x.id !== fx.id),
+                        })
+                      }
+                    >
+                      <Trash2 className="size-4" />
+                    </IconButton>
+                  </Row>
+                ))
+              )}
+              <form
+                className="flex gap-2 px-4 py-3"
+                onSubmit={(e) => {
+                  e.preventDefault()
+                  const form = e.currentTarget
+                  const label = (form.elements.namedItem("fxLabel") as HTMLInputElement).value.trim()
+                  const value = parseFloat((form.elements.namedItem("fxAmount") as HTMLInputElement).value)
+                  if (!label || Number.isNaN(value)) return
+                  saveSharedMonth({
+                    ...currentHouseholdMonth,
+                    fixedExpenses: [
+                      ...currentHouseholdMonth.fixedExpenses,
+                      { id: Date.now().toString(), amount: value, description: label, paidBy: currentUser ?? "" },
+                    ],
+                  }).then((ok) => ok && form.reset())
+                }}
+              >
+                <input name="fxLabel" placeholder="Loyer" className={FIELD} style={FIELD_STYLE} aria-label="Intitulé de la charge commune" />
+                <input
+                  name="fxAmount"
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  placeholder="780"
+                  className={`${FIELD} !w-24 shrink-0`}
+                  style={FIELD_STYLE}
+                  aria-label="Montant de la charge commune"
+                />
+                <button
+                  type="submit"
+                  className="shrink-0 rounded-xl px-3.5"
+                  style={{ backgroundColor: "var(--t-moss)", color: "var(--t-brass)" }}
+                  aria-label="Ajouter la charge commune"
+                >
+                  <Plus className="size-5" />
+                </button>
+              </form>
+            </Panel>
+
+            <Panel flush>
+              <div className="px-4 pb-1 pt-3">
+                <SectionTitle>Dépenses communes</SectionTitle>
+              </div>
+              {currentHouseholdMonth.expenses.length === 0 ? (
+                <Empty title="Rien de noté en commun">
+                  Appuie sur + puis choisis « {household!.name} » pour partager une dépense.
+                </Empty>
+              ) : (
+                currentHouseholdMonth.expenses.map((e) => (
+                  <Row key={e.id}>
+                    <Dot color={catById(e.category)?.color ?? "var(--t-sage)"} />
+                    <button
+                      type="button"
+                      onClick={() => openExpenseSheet(e)}
+                      className="min-w-0 flex-1 rounded-lg text-left"
+                    >
+                      <span className="block truncate text-sm" style={{ color: "var(--t-paper)" }}>
+                        {e.description}
+                      </span>
+                      <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                        {dayLabel(e.date)} · payé par {e.paidBy === currentUser ? "toi" : e.paidBy}
+                      </span>
+                    </button>
+                    <Amount>{euros(e.amount)}</Amount>
+                    <IconButton label={`Supprimer ${e.description}`} danger onClick={() => deleteSharedExpense(e.id)}>
+                      <Trash2 className="size-4" />
+                    </IconButton>
+                  </Row>
+                ))
+              )}
+            </Panel>
+          </div>
+        )}
+
         {/* ===================== MOIS ===================== */}
-        {screen === "mois" &&
+        {screen === "mois" && !isShared &&
           (!month ? (
             <div className="px-4 pt-10">
               <Panel>
@@ -1512,6 +1925,132 @@ export default function Thrift() {
         {/* ===================== RÉGLAGES ===================== */}
         {screen === "reglages" && (
           <div className="space-y-4 px-4 pt-4">
+            {/* Invitations reçues, en premier : quelqu'un attend une réponse. */}
+            {invites.length > 0 && (
+              <Panel>
+                <SectionTitle>Invitations</SectionTitle>
+                <ul className="space-y-3">
+                  {invites.map((inv) => (
+                    <li key={inv.householdId}>
+                      <p className="text-sm" style={{ color: "var(--t-paper)" }}>
+                        <span className="font-semibold">{inv.invitedBy}</span> t&apos;invite à rejoindre{" "}
+                        <span className="font-semibold">{inv.householdName}</span>.
+                      </p>
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            householdAction({ action: "accept", householdId: inv.householdId }, "Foyer rejoint")
+                          }
+                          className="rounded-xl px-4 py-2 text-sm font-semibold"
+                          style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                        >
+                          Rejoindre
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            householdAction({ action: "decline", householdId: inv.householdId }, "Invitation refusée")
+                          }
+                          className="rounded-xl px-4 py-2 text-sm font-semibold"
+                          style={{ backgroundColor: "var(--t-moss)", color: "var(--t-mist)" }}
+                        >
+                          Refuser
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </Panel>
+            )}
+
+            {household ? (
+              <Panel flush>
+                <div className="px-4 pb-1 pt-3">
+                  <SectionTitle aside={`${household.members.length} membres`}>{household.name}</SectionTitle>
+                </div>
+                {household.members.map((m) => (
+                  <Row key={m.username}>
+                    <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--t-paper)" }}>
+                      {m.username}
+                      {m.username === currentUser && <span style={{ color: "var(--t-sage)" }}> (toi)</span>}
+                    </span>
+                    <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                      {m.role === "proprietaire" ? "a créé le foyer" : "membre"}
+                    </span>
+                  </Row>
+                ))}
+                {pendingInvites.map((u) => (
+                  <Row key={u}>
+                    <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--t-sage)" }}>
+                      {u}
+                    </span>
+                    <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                      invitation en attente
+                    </span>
+                    <IconButton
+                      label={`Annuler l'invitation de ${u}`}
+                      danger
+                      onClick={() => householdAction({ action: "cancelInvite", username: u }, "Invitation annulée")}
+                    >
+                      <X className="size-4" />
+                    </IconButton>
+                  </Row>
+                ))}
+
+                <form onSubmit={inviteMember} className="flex gap-2 px-4 py-3">
+                  <input
+                    value={inviteName}
+                    onChange={(e) => setInviteName(e.target.value)}
+                    placeholder="Pseudo à inviter"
+                    autoCapitalize="none"
+                    className={FIELD}
+                    style={FIELD_STYLE}
+                    aria-label="Pseudo de la personne à inviter"
+                  />
+                  <button
+                    type="submit"
+                    className="shrink-0 rounded-xl px-4 text-sm font-semibold"
+                    style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                  >
+                    Inviter
+                  </button>
+                </form>
+
+                <Row onClick={leaveHouseholdFn}>
+                  <LogOut className="size-4" style={{ color: "var(--t-alert)" }} />
+                  <span className="flex-1 text-sm" style={{ color: "var(--t-alert)" }}>
+                    Quitter {household.name}
+                  </span>
+                </Row>
+              </Panel>
+            ) : (
+              <Panel>
+                <SectionTitle>Foyer</SectionTitle>
+                <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
+                  Un espace partagé à côté de ton budget perso : les dépenses communes y vont, et l&apos;app calcule qui
+                  doit combien à qui. Tu invites ensuite qui tu veux par son pseudo.
+                </p>
+                <form onSubmit={createHouseholdFn} className="flex gap-2">
+                  <input
+                    value={newHouseholdName}
+                    onChange={(e) => setNewHouseholdName(e.target.value)}
+                    placeholder="Maison, Coloc, Vacances…"
+                    className={FIELD}
+                    style={FIELD_STYLE}
+                    aria-label="Nom du foyer"
+                  />
+                  <button
+                    type="submit"
+                    className="shrink-0 rounded-xl px-4 text-sm font-semibold"
+                    style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                  >
+                    Créer
+                  </button>
+                </form>
+              </Panel>
+            )}
+
             <Panel>
               <SectionTitle>Budgets par catégorie</SectionTitle>
               <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
@@ -1654,7 +2193,7 @@ export default function Thrift() {
         }}
         title={editingExpense ? "Modifier la dépense" : "Noter une dépense"}
       >
-        {!editingExpense && suggestions.length > 0 && (
+        {!editingExpense && !isShared && suggestions.length > 0 && (
           <div className="mb-4">
             <p className={LABEL} style={LABEL_STYLE}>
               Tes habitudes
@@ -1680,6 +2219,37 @@ export default function Thrift() {
         )}
 
         <form onSubmit={submitExpense} className="space-y-3">
+          {household && !editingExpense && (
+            <div>
+              <p className={LABEL} style={LABEL_STYLE}>
+                Pour qui
+              </p>
+              <div className="flex gap-2">
+                <Chip active={view === "moi"} onClick={() => setView("moi")}>
+                  Moi
+                </Chip>
+                <Chip active={view === "foyer"} onClick={() => setView("foyer")}>
+                  {household.name}
+                </Chip>
+              </div>
+            </div>
+          )}
+
+          {isShared && memberNames.length > 1 && (
+            <div>
+              <p className={LABEL} style={LABEL_STYLE}>
+                Qui a payé
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {memberNames.map((m) => (
+                  <Chip key={m} active={paidBy === m} onClick={() => setPaidBy(m)}>
+                    {m === currentUser ? "Moi" : m}
+                  </Chip>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <label htmlFor="qa-montant" className={LABEL} style={LABEL_STYLE}>
               Montant
@@ -1748,7 +2318,7 @@ export default function Thrift() {
             className="w-full rounded-xl py-3.5 text-base font-semibold disabled:opacity-50"
             style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
           >
-            {editingExpense ? "Enregistrer" : "Noter la dépense"}
+            {editingExpense ? "Enregistrer" : isShared ? "Noter pour le foyer" : "Noter la dépense"}
           </button>
         </form>
       </Sheet>
