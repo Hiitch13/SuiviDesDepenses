@@ -68,6 +68,9 @@ export default function Thrift() {
   // ==========================================
   const [currentUser, setCurrentUser] = useState<string | null>(null)
   const [isLoggingIn, setIsLoggingIn] = useState(false)
+  // Vrai tant qu'on n'a pas su si un cookie de session existe : évite de
+  // faire clignoter l'écran de connexion devant quelqu'un de déjà connecté.
+  const [isRestoringSession, setIsRestoringSession] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
 
   const [screen, setScreen] = useState<Screen>("mois")
@@ -147,15 +150,17 @@ export default function Thrift() {
 
     setIsLoggingIn(true)
     try {
-      const res = await fetch("/api/expenses", {
+      const res = await fetch("/api/auth", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isAuth: true, username: username.trim(), password: password.trim() }),
+        body: JSON.stringify({ username: username.trim(), password: password.trim() }),
       })
       const data = await res.json()
 
       if (res.ok) {
-        setCurrentUser(username.trim())
+        // Le serveur a posé le cookie de session ; le pseudo renvoyé fait foi.
+        setCurrentUser(data.user)
+        if (data.created) toast({ title: "Compte créé", description: `Bienvenue, ${data.user}.` })
         setMonth("")
         setSalary("")
         setExpenses([])
@@ -173,13 +178,32 @@ export default function Thrift() {
     }
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    await fetch("/api/auth", { method: "DELETE" }).catch(() => {})
     setCurrentUser(null)
     setAllMonths([])
     setAllMonthsData([])
     setMonth("")
     setScreen("mois")
   }
+
+  // Retrouve la session au démarrage : sans ça, chaque rafraîchissement
+  // renvoyait à l'écran de connexion.
+  useEffect(() => {
+    let cancelled = false
+    fetch("/api/auth")
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled && d.user) setCurrentUser(d.user)
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setIsRestoringSession(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // ==========================================
   // 3. Chargement des données
@@ -188,7 +212,11 @@ export default function Thrift() {
     if (!currentUser) return
     try {
       setIsLoading(true)
-      const res = await fetch(`/api/expenses?user=${currentUser}`)
+      const res = await fetch("/api/expenses")
+      if (res.status === 401) {
+        setCurrentUser(null)
+        return
+      }
       if (!res.ok) throw new Error("Erreur lors du chargement")
 
       const data: AllData = await res.json()
@@ -211,7 +239,7 @@ export default function Thrift() {
     if (!currentUser) return
     try {
       setIsLoading(true)
-      const res = await fetch(`/api/expenses?month=${selectedMonth}&user=${currentUser}`)
+      const res = await fetch(`/api/expenses?month=${encodeURIComponent(selectedMonth)}`)
       if (!res.ok) throw new Error("Mois introuvable")
 
       const data: MonthData = await res.json()
@@ -262,7 +290,6 @@ export default function Thrift() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user: currentUser,
           month: newMonth,
           salary: newSalary,
           expenses: newExpenses,
@@ -280,7 +307,6 @@ export default function Thrift() {
       // Le serveur a accepté exactement ce qu'on lui a envoyé : on remplace le
       // mois localement plutôt que de recharger tout l'historique.
       const savedMonth: MonthData = {
-        user: currentUser,
         month: newMonth,
         salary: newSalary,
         expenses: newExpenses,
@@ -324,7 +350,6 @@ export default function Thrift() {
     if (!newMonthInput || !newMonthSalary || !currentUser) return
 
     const monthData: MonthData = {
-      user: currentUser,
       month: newMonthInput,
       salary: parseFloat(newMonthSalary),
       expenses: [],
@@ -364,7 +389,7 @@ export default function Thrift() {
     if (!month || !currentUser) return
     if (!confirm(`Supprimer ${monthLabel(month)} et toutes ses dépenses ?`)) return
 
-    const res = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, { method: "DELETE" })
+    const res = await fetch(`/api/expenses?month=${encodeURIComponent(month)}`, { method: "DELETE" })
     if (res.ok) {
       toast({ title: "Mois supprimé" })
       setMonth("")
@@ -403,7 +428,6 @@ export default function Thrift() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user: currentUser,
           month: target,
           salary: parseFloat(salary) || 0,
           expenses,
@@ -414,7 +438,7 @@ export default function Thrift() {
       })
       if (!createRes.ok) throw new Error("create")
 
-      const delRes = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, { method: "DELETE" })
+      const delRes = await fetch(`/api/expenses?month=${encodeURIComponent(month)}`, { method: "DELETE" })
       if (!delRes.ok) throw new Error("delete")
 
       // Reporte la référence du solde de départ si elle pointait sur l'ancien mois.
@@ -503,7 +527,7 @@ export default function Thrift() {
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isCategoryUpdate: true, username: currentUser, customCategories: newList }),
+        body: JSON.stringify({ isCategoryUpdate: true, customCategories: newList }),
       })
       return res.ok
     } catch (error) {
@@ -558,7 +582,7 @@ export default function Thrift() {
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isBudgetUpdate: true, username: currentUser, categoryBudgets: newBudgets }),
+        body: JSON.stringify({ isBudgetUpdate: true, categoryBudgets: newBudgets }),
       })
       toast(
         res.ok
@@ -588,7 +612,6 @@ export default function Thrift() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           isProjectUpdate: true,
-          username: currentUser,
           projects: newProjects,
           initialSavings: newInitialSavings,
           initialSavingsMonth: newInitialSavingsMonth,
@@ -835,6 +858,10 @@ export default function Thrift() {
   // ==========================================
   // 12. Rendu
   // ==========================================
+  if (isRestoringSession) {
+    return <main className="min-h-[100svh]" style={{ backgroundColor: "var(--t-ink)" }} />
+  }
+
   if (!currentUser) {
     return <Login onSubmit={handleLogin} busy={isLoggingIn} />
   }
