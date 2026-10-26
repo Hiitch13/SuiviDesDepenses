@@ -2,85 +2,55 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  font-family: Arial, Helvetica, sans-serif;
-}
-
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
-}
-
+/*
+  thrift — voir DESIGN.md pour le parti pris.
+  Les jetons bruts vivent ici en hex ; les variables shadcn juste en dessous
+  les reprennent en HSL pour que les composants déjà en place (dialogues,
+  listes déroulantes, bascules) héritent de la palette sans être réécrits.
+*/
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 0 0% 3.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 0 0% 3.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 0 0% 3.9%;
-    --primary: 0 0% 9%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 0 0% 96.1%;
-    --secondary-foreground: 0 0% 9%;
-    --muted: 0 0% 96.1%;
-    --muted-foreground: 0 0% 45.1%;
-    --accent: 0 0% 96.1%;
-    --accent-foreground: 0 0% 9%;
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 89.8%;
-    --input: 0 0% 89.8%;
-    --ring: 0 0% 3.9%;
-    --chart-1: 12 76% 61%;
-    --chart-2: 173 58% 39%;
-    --chart-3: 197 37% 24%;
-    --chart-4: 43 74% 66%;
-    --chart-5: 27 87% 67%;
-    --radius: 0.5rem;
-    --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-  .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --t-ink: #071a17;
+    --t-pine: #0b2621;
+    --t-moss: #13362e;
+    --t-line: #1d4a3f;
+    --t-paper: #f2ede1;
+    --t-mist: #b9c7c1;
+    --t-sage: #8a9a94;
+    --t-brass: #e8b84b;
+    --t-clay: #c8402f;
+
+    /* Catégories — ordre figé, validé sur --t-pine. Ne pas permuter. */
+    --t-cat-alimentation: #d95926;
+    --t-cat-transport: #3987e5;
+    --t-cat-loisirs: #d55181;
+    --t-cat-restaurant: #c98500;
+    --t-cat-shopping: #9085e9;
+    --t-cat-sante: #e66767;
+    --t-cat-epargne: #008300;
+    --t-cat-autres: #8a9a94;
+    --t-cat-libre: #199e70;
+
+    --background: 170.5 57.6% 6.5%;
+    --foreground: 42.4 39.5% 91.6%;
+    --card: 168.9 55.1% 9.6%;
+    --card-foreground: 42.4 39.5% 91.6%;
+    --popover: 166.3 47.9% 14.3%;
+    --popover-foreground: 42.4 39.5% 91.6%;
+    --primary: 41.7 77.3% 60.2%;
+    --primary-foreground: 170.5 57.6% 6.5%;
+    --secondary: 166.3 47.9% 14.3%;
+    --secondary-foreground: 42.4 39.5% 91.6%;
+    --muted: 166.3 47.9% 14.3%;
+    --muted-foreground: 154.3 11.1% 75.3%;
+    --accent: 165.3 43.7% 20.2%;
+    --accent-foreground: 42.4 39.5% 91.6%;
+    --destructive: 6.7 61.9% 48.4%;
+    --destructive-foreground: 42.4 39.5% 91.6%;
+    --border: 165.3 43.7% 20.2%;
+    --input: 165.3 43.7% 20.2%;
+    --ring: 41.7 77.3% 60.2%;
+    --radius: 0.75rem;
   }
 }
 
@@ -88,7 +58,78 @@ body {
   * {
     @apply border-border;
   }
+
+  html {
+    background-color: var(--t-ink);
+    /* Teinte la barre de défilement et les zones de rebond du navigateur. */
+    color-scheme: dark;
+  }
+
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-archivo), system-ui, sans-serif;
+    font-synthesis-weight: none;
+    -webkit-font-smoothing: antialiased;
+    /* L'app occupe la hauteur de la fenêtre, barre d'onglets comprise. */
+    min-height: 100svh;
+  }
+
+  /* Le focus doit rester franc sur fond sombre. */
+  :focus-visible {
+    outline: 2px solid var(--t-brass);
+    outline-offset: 2px;
+  }
+
+  /* Les flèches des champs numériques sont inutilisables au doigt. */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Colonnes de montants : l'alignement prime sur la densité. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+  }
+
+  /* Chiffre héros : chiffres proportionnels, un seul par écran. */
+  .figure-hero {
+    font-variant-numeric: proportional-nums;
+    font-stretch: 112%;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 0.92;
+  }
+
+  .wordmark {
+    font-stretch: 84%;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  /* Sous la barre d'onglets fixe, et au-dessus de la zone tactile du téléphone. */
+  .pb-dock {
+    padding-bottom: calc(5.25rem + env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }

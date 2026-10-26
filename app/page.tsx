@@ -1,331 +1,196 @@
 "use client"
 
-import { useState, useEffect, FormEvent } from "react"
-import { 
-  Plus, 
-  Edit, 
-  Trash2, 
-  User, 
-  LogOut, 
-  Wallet, 
-  Lock, 
-  TrendingUp, 
-  TrendingDown, 
-  Calendar, 
-  PieChart as PieChartIcon, 
-  ArrowRight, 
-  DollarSign,
-  Activity,
-  CheckCircle2,
-  Search,
-  Target,
-  Plane,
-  ShoppingBag,
-  Rocket,
-  PiggyBank
-} from "lucide-react"
+import { type FormEvent, useEffect, useMemo, useState } from "react"
+import { Check, ChevronDown, Download, LogOut, Pencil, Plus, Trash2, X } from "lucide-react"
 
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
+
 import {
-  Card, 
-  CardContent, 
-  CardDescription, 
-  CardFooter,
-  CardHeader, 
-  CardTitle
-} from "@/components/ui/card"
-import {
-  Tabs, 
-  TabsContent, 
-  TabsList, 
-  TabsTrigger
-} from "@/components/ui/tabs"
-import {
-  Select, 
-  SelectContent, 
-  SelectItem,
-  SelectTrigger, 
-  SelectValue
-} from "@/components/ui/select"
-import { Badge } from "@/components/ui/badge"
-import {
-  Dialog, 
-  DialogContent, 
-  DialogDescription,
-  DialogFooter, 
-  DialogHeader, 
+  Dialog,
+  DialogContent,
+  DialogHeader,
   DialogTitle,
-  DialogTrigger, 
-  DialogClose,
 } from "@/components/ui/dialog"
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/components/ui/use-toast"
 
-// Import Recharts (Graphiques)
-// Assurez-vous d'avoir fait : npm install recharts
+import { CategoryBars, ComparisonList, EvolutionChart, ProjectionChart } from "@/components/thrift/charts"
+import { Dock, type Screen } from "@/components/thrift/dock"
+import { Login } from "@/components/thrift/login"
+import { Reservoir } from "@/components/thrift/reservoir"
+import { Amount, Dot, Empty, Panel, Row, SectionTitle, Wordmark } from "@/components/thrift/ui"
+
 import {
-  PieChart,
-  Pie,
-  Cell,
-  ResponsiveContainer,
-  Tooltip as RechartsTooltip,
-  Legend,
-  AreaChart,
-  Area,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  ReferenceLine
-} from "recharts"
+  type AllData,
+  type Category,
+  CUSTOM_CATEGORY_COLORS,
+  DEFAULT_CATEGORIES,
+  type Expense,
+  type FixedExpense,
+  type IncomeEntry,
+  type MonthData,
+  PROJECT_TYPES,
+  type Project,
+  type ProjectType,
+  buildProjection,
+  compareToPreviousMonth,
+  computeTotals,
+  currentMonthKey,
+  daysLeftInMonth,
+  frequentSuggestions,
+  monthlyHistory,
+  overBudgetCategories,
+  spendByCategory,
+  toCsv,
+  weeklyPacing,
+} from "@/lib/budget"
+import { dayLabel, euros, eurosRound, initials, monthLabel, ofMonth } from "@/lib/format"
 
-// === PALETTE DE COULEURS ===
-const COLORS = [
-  '#3b82f6', // Bleu
-  '#10b981', // Emeraude
-  '#f59e0b', // Ambre
-  '#ef4444', // Rouge
-  '#8b5cf6', // Violet
-  '#ec4899', // Rose
-  '#6366f1', // Indigo
-  '#64748b'  // Gris
-];
+// Styles de champ partagés : les champs natifs restent plus fiables au doigt
+// que des composants enrobés, et ils héritent déjà des jetons.
+// `min-w-0` est indispensable : placé dans une rangée flex à côté d'un bouton,
+// un champ en `w-full` refuse sinon de rétrécir, déborde l'écran, et étire au
+// passage la barre d'onglets fixée en bas.
+const FIELD =
+  "w-full min-w-0 rounded-xl border px-3.5 py-3 text-base outline-none transition-colors placeholder:opacity-50 focus:border-[var(--t-brass)]"
+const FIELD_STYLE = {
+  backgroundColor: "var(--t-moss)",
+  borderColor: "var(--t-line)",
+  color: "var(--t-paper)",
+} as const
 
-// === TYPES ===
-type Expense = {
-  id: string
-  amount: number
-  description: string
-  category: string
-  date: string
-}
+const LABEL = "mb-1.5 block text-sm"
+const LABEL_STYLE = { color: "var(--t-sage)" } as const
 
-type FixedExpense = {
-  id: string
-  amount: number
-  description: string
-  isExceptional?: boolean
-}
-
-type Category = {
-  id: string
-  name: string
-  color: string
-}
-
-type IncomeEntry = {
-  id: string
-  amount: number
-  description: string
-}
-
-type MonthData = {
-  user?: string
-  month: string
-  salary: number
-  expenses: Expense[]
-  fixedExpenses: FixedExpense[]
-  savingsGoal?: number
-  extraIncomes?: IncomeEntry[]
-}
-
-type ProjectType = "voyage" | "achat" | "projet"
-
-type Project = {
-  id: string
-  name: string
-  amount: number
-  targetMonth: string
-  type: ProjectType
-  included: boolean
-}
-
-type AllData = {
-  months: MonthData[]
-  customCategories?: Category[]
-  categoryBudgets?: Record<string, number>
-  projects?: Project[]
-  initialSavings?: number
-  initialSavingsMonth?: string
-}
-
-export default function ExpenseTracker() {
+export default function Thrift() {
   // ==========================================
-  // 1. STATES (États de l'application)
+  // 1. États
   // ==========================================
-  
-  // Utilisateur courant
   const [currentUser, setCurrentUser] = useState<string | null>(null)
-  
-  // Login / Auth
-  const [usernameInput, setUsernameInput] = useState("")
-  const [passwordInput, setPasswordInput] = useState("")
   const [isLoggingIn, setIsLoggingIn] = useState(false)
-
-  // Données Globales
-  const [allMonths, setAllMonths] = useState<string[]>([])
-  // Tous les mois de l'utilisateur (suggestions rapides, projection d'épargne) : après une
-  // sauvegarde on remplace uniquement le mois courant au lieu de tout recharger depuis l'API.
-  const [allMonthsData, setAllMonthsData] = useState<MonthData[]>([])
   const [isLoading, setIsLoading] = useState(false)
 
-  // Données du Mois Sélectionné
+  const [screen, setScreen] = useState<Screen>("mois")
+
+  const [allMonths, setAllMonths] = useState<string[]>([])
+  const [allMonthsData, setAllMonthsData] = useState<MonthData[]>([])
+
+  // Mois affiché
   const [month, setMonth] = useState("")
   const [salary, setSalary] = useState("")
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [fixedExpenses, setFixedExpenses] = useState<FixedExpense[]>([])
   const [extraIncomes, setExtraIncomes] = useState<IncomeEntry[]>([])
+  const [savingsGoalInput, setSavingsGoalInput] = useState("0")
 
-  // UI & Feedback
-  const { toast } = useToast()
-  
-  // Formulaires : Ajout Dépense
+  // Préférences du compte
+  const [customCategories, setCustomCategories] = useState<Category[]>([])
+  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({})
+  const [projects, setProjects] = useState<Project[]>([])
+  const [initialSavings, setInitialSavings] = useState(0)
+  const [initialSavingsInput, setInitialSavingsInput] = useState("0")
+  const [initialSavingsMonth, setInitialSavingsMonth] = useState("")
+
+  // Saisie d'une dépense
+  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
   const [amount, setAmount] = useState("")
   const [description, setDescription] = useState("")
   const [category, setCategory] = useState("alimentation")
 
-  // Catégories personnalisées (ajoutées par l'utilisateur)
-  const [customCategories, setCustomCategories] = useState<Category[]>([])
+  // Charges fixes
+  const [fixedAmount, setFixedAmount] = useState("")
+  const [fixedDescription, setFixedDescription] = useState("")
+  const [isExceptional, setIsExceptional] = useState(false)
+  const [editingFixedExpense, setEditingFixedExpense] = useState<FixedExpense | null>(null)
+  const [isFixedFormOpen, setIsFixedFormOpen] = useState(false)
+
+  // Revenus supplémentaires
+  const [incomeAmount, setIncomeAmount] = useState("")
+  const [incomeDescription, setIncomeDescription] = useState("")
+
+  // Catégories personnalisées
   const [newCategoryName, setNewCategoryName] = useState("")
-  const [newCategoryColor, setNewCategoryColor] = useState(COLORS[0])
+  const [newCategoryColor, setNewCategoryColor] = useState(CUSTOM_CATEGORY_COLORS[0])
 
-  // Budgets mensuels par catégorie (optionnels)
-  const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({})
-
-  // Objectif d'épargne du mois
-  const [savingsGoalInput, setSavingsGoalInput] = useState("0")
-
-  // Projets & épargne (inspiré du budget foyer Excel)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [initialSavings, setInitialSavings] = useState<number>(0)
-  const [initialSavingsInput, setInitialSavingsInput] = useState("0")
-  const [initialSavingsMonth, setInitialSavingsMonth] = useState<string>("")
+  // Projets
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectAmount, setNewProjectAmount] = useState("")
   const [newProjectMonth, setNewProjectMonth] = useState("")
   const [newProjectType, setNewProjectType] = useState<ProjectType>("achat")
 
-  // Bouton flottant d'ajout rapide
-  const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
-  
-  // Formulaire : Revenus supplémentaires
-  const [incomeAmount, setIncomeAmount] = useState("")
-  const [incomeDescription, setIncomeDescription] = useState("")
-
-  // Formulaires : Charges Fixes
-  const [fixedAmount, setFixedAmount] = useState("")
-  const [fixedDescription, setFixedDescription] = useState("")
-  const [isExceptional, setIsExceptional] = useState(false)
-  const [editingFixedExpense, setEditingFixedExpense] = useState<FixedExpense | null>(null)
-  
-  // Filtres
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-  
-  // Formulaire : Nouveau Mois
+  // Gestion du mois
+  const [isNewMonthDialogOpen, setIsNewMonthDialogOpen] = useState(false)
   const [newMonthInput, setNewMonthInput] = useState("")
   const [newMonthSalary, setNewMonthSalary] = useState("")
-  const [isNewMonthDialogOpen, setIsNewMonthDialogOpen] = useState(false)
-
-  // Formulaire : Corriger la date du mois
   const [isEditMonthOpen, setIsEditMonthOpen] = useState(false)
   const [editMonthInput, setEditMonthInput] = useState("")
+  const [isMonthPickerOpen, setIsMonthPickerOpen] = useState(false)
 
-  // Configuration des catégories (catégories par défaut + catégories personnalisées de l'utilisateur)
-  const defaultCategories: Category[] = [
-    { id: "alimentation", name: "Alimentation", color: COLORS[0] },
-    { id: "transport", name: "Transport", color: COLORS[1] },
-    { id: "loisirs", name: "Loisirs", color: COLORS[2] },
-    { id: "restaurant", name: "Restaurant", color: COLORS[3] },
-    { id: "shopping", name: "Shopping", color: COLORS[4] },
-    { id: "sante", name: "Santé", color: COLORS[5] },
-    { id: "epargne", name: "Epargne", color: COLORS[6] },
-    { id: "autres", name: "Autres", color: COLORS[7] },
-  ]
-  const categories = [...defaultCategories, ...customCategories]
+  // Recherche et filtres de l'historique
+  const [query, setQuery] = useState("")
+  const [filterCategory, setFilterCategory] = useState<string | null>(null)
+  const [scopeAllMonths, setScopeAllMonths] = useState(false)
+
+  const { toast } = useToast()
+
+  const categories = useMemo(() => [...DEFAULT_CATEGORIES, ...customCategories], [customCategories])
+  const currentMonthStr = currentMonthKey()
 
   // ==========================================
-  // 2. AUTHENTIFICATION
+  // 2. Authentification
   // ==========================================
-  async function handleLogin(e: FormEvent) {
-    e.preventDefault()
-    
-    if (!usernameInput.trim() || !passwordInput.trim()) {
-        toast({ 
-          title: "Champs requis", 
-          description: "Veuillez entrer un pseudo et un mot de passe.", 
-          variant: "destructive" 
-        })
-        return
+  async function handleLogin(username: string, password: string) {
+    if (!username.trim() || !password.trim()) {
+      toast({ title: "Champs requis", description: "Entre un pseudo et un mot de passe.", variant: "destructive" })
+      return
     }
 
     setIsLoggingIn(true)
-
     try {
-        const res = await fetch("/api/expenses", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ 
-              isAuth: true, 
-              username: usernameInput.trim(), 
-              password: passwordInput.trim() 
-            })
-        })
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isAuth: true, username: username.trim(), password: password.trim() }),
+      })
+      const data = await res.json()
 
-        const data = await res.json()
-
-        if (res.ok) {
-            setCurrentUser(usernameInput.trim())
-            toast({ 
-              title: "Bienvenue !", 
-              description: "Connexion réussie." 
-            })
-            // Réinitialiser les données locales
-            setMonth("")
-            setSalary("")
-            setExpenses([])
-            setFixedExpenses([])
-            setExtraIncomes([])
-            setSavingsGoalInput("0")
-        } else {
-            toast({ 
-              title: "Accès refusé", 
-              description: data.error || "Erreur inconnue", 
-              variant: "destructive" 
-            })
-        }
+      if (res.ok) {
+        setCurrentUser(username.trim())
+        setMonth("")
+        setSalary("")
+        setExpenses([])
+        setFixedExpenses([])
+        setExtraIncomes([])
+        setSavingsGoalInput("0")
+      } else {
+        toast({ title: "Accès refusé", description: data.error || "Erreur inconnue", variant: "destructive" })
+      }
     } catch (error) {
-        console.error(error)
-        toast({ 
-          title: "Erreur réseau", 
-          description: "Impossible de joindre le serveur.", 
-          variant: "destructive" 
-        })
+      console.error(error)
+      toast({ title: "Erreur réseau", description: "Impossible de joindre le serveur.", variant: "destructive" })
     } finally {
-        setIsLoggingIn(false)
+      setIsLoggingIn(false)
     }
   }
 
   function handleLogout() {
     setCurrentUser(null)
     setAllMonths([])
+    setAllMonthsData([])
     setMonth("")
-    setPasswordInput("")
-    setUsernameInput("")
+    setScreen("mois")
   }
 
   // ==========================================
-  // 3. CHARGEMENT DES DONNÉES (API)
+  // 3. Chargement des données
   // ==========================================
-  
-  // Charger la liste des mois disponibles
   async function fetchAllMonths() {
-    if (!currentUser) return 
+    if (!currentUser) return
     try {
       setIsLoading(true)
       const res = await fetch(`/api/expenses?user=${currentUser}`)
       if (!res.ok) throw new Error("Erreur lors du chargement")
-      
+
       const data: AllData = await res.json()
       setAllMonths(data.months.map((m) => m.month).sort())
       setAllMonthsData(data.months)
@@ -333,52 +198,53 @@ export default function ExpenseTracker() {
       setCategoryBudgets(data.categoryBudgets || {})
       setProjects(data.projects || [])
       setInitialSavings(data.initialSavings || 0)
-      setInitialSavingsInput((data.initialSavings || 0).toString())
+      setInitialSavingsInput(String(data.initialSavings || 0))
       setInitialSavingsMonth(data.initialSavingsMonth || "")
-    } catch (error) { 
-      console.error(error) 
-    } finally { 
-      setIsLoading(false) 
+    } catch (error) {
+      console.error(error)
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  // Charger un mois spécifique
   async function fetchMonthData(selectedMonth: string) {
     if (!currentUser) return
     try {
       setIsLoading(true)
       const res = await fetch(`/api/expenses?month=${selectedMonth}&user=${currentUser}`)
       if (!res.ok) throw new Error("Mois introuvable")
-      
+
       const data: MonthData = await res.json()
       setMonth(data.month)
       setSalary(data.salary.toString())
       setExpenses(data.expenses)
       setFixedExpenses(data.fixedExpenses)
-      setExtraIncomes(data.extraIncomes ?? [])
+      setExtraIncomes(data.extraIncomes || [])
       setSavingsGoalInput((data.savingsGoal ?? 0).toString())
     } catch (error) {
       console.error(error)
-      toast({ 
-        title: "Erreur", 
-        description: "Impossible de charger les données du mois.", 
-        variant: "destructive" 
-      })
+      toast({ title: "Erreur", description: "Impossible de charger ce mois.", variant: "destructive" })
       setMonth("")
-    } finally { 
-      setIsLoading(false) 
+    } finally {
+      setIsLoading(false)
     }
   }
 
-  // Charger les mois dès que l'utilisateur est connecté
-  useEffect(() => { 
-    if (currentUser) {
-      fetchAllMonths()
-    }
+  useEffect(() => {
+    if (currentUser) fetchAllMonths()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser])
 
+  // Ouvre le mois en cours dès qu'il existe, plutôt qu'un écran vide.
+  useEffect(() => {
+    if (!currentUser || month || allMonths.length === 0) return
+    const target = allMonths.includes(currentMonthStr) ? currentMonthStr : allMonths[allMonths.length - 1]
+    fetchMonthData(target)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser, allMonths])
+
   // ==========================================
-  // 4. SAUVEGARDE (API)
+  // 4. Sauvegarde
   // ==========================================
   async function saveData(
     newExpenses: Expense[],
@@ -411,8 +277,8 @@ export default function ExpenseTracker() {
         throw new Error(data.error || "La sauvegarde a échoué.")
       }
 
-      // Le serveur a accepté exactement ce qu'on lui a envoyé : inutile de recharger tous
-      // les mois (un aller-retour de plus), on remplace le mois courant localement.
+      // Le serveur a accepté exactement ce qu'on lui a envoyé : on remplace le
+      // mois localement plutôt que de recharger tout l'historique.
       const savedMonth: MonthData = {
         user: currentUser,
         month: newMonth,
@@ -422,58 +288,54 @@ export default function ExpenseTracker() {
         savingsGoal: newSavingsGoal,
         extraIncomes: newExtraIncomes,
       }
-      setAllMonthsData(prev =>
-        prev.some(m => m.month === newMonth)
-          ? prev.map(m => (m.month === newMonth ? savedMonth : m))
+      setAllMonthsData((prev) =>
+        prev.some((m) => m.month === newMonth)
+          ? prev.map((m) => (m.month === newMonth ? savedMonth : m))
           : [...prev, savedMonth]
       )
       return true
     } catch (error) {
       console.error(error)
-      toast({ 
-        title: "Erreur", 
-        description: error instanceof Error ? error.message : "La sauvegarde a échoué.", 
-        variant: "destructive" 
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "La sauvegarde a échoué.",
+        variant: "destructive",
       })
       return false
-    } finally { 
-      setIsLoading(false) 
+    } finally {
+      setIsLoading(false)
     }
   }
 
   // ==========================================
-  // 5. GESTION DU MOIS (Création / Suppression)
+  // 5. Gestion du mois
   // ==========================================
-
-  // Suggère le mois suivant le dernier mois connu (reste modifiable librement)
   function getSuggestedNextMonth(): string {
     const reference = month || [...allMonths].sort().slice(-1)[0] || ""
     const [y, m] = reference.split("-").map(Number)
-    if (!y || !m) return ""
+    if (!y || !m) return currentMonthStr
 
-    const nextDate = new Date(y, m, 1) // m est 1-indexé -> index 0-indexé du mois suivant
-    const ny = nextDate.getFullYear()
-    const nm = (nextDate.getMonth() + 1).toString().padStart(2, "0")
-    return `${ny}-${nm}`
+    const nextDate = new Date(y, m, 1)
+    return `${nextDate.getFullYear()}-${(nextDate.getMonth() + 1).toString().padStart(2, "0")}`
   }
 
   async function createNewMonth(e: FormEvent) {
     e.preventDefault()
     if (!newMonthInput || !newMonthSalary || !currentUser) return
-    
-    const monthData: MonthData = { 
-      user: currentUser, 
-      month: newMonthInput, 
-      salary: parseFloat(newMonthSalary), 
-      expenses: [], 
-      fixedExpenses: [] 
+
+    const monthData: MonthData = {
+      user: currentUser,
+      month: newMonthInput,
+      salary: parseFloat(newMonthSalary),
+      expenses: [],
+      fixedExpenses: [],
     }
 
     try {
-      const response = await fetch("/api/expenses", { 
-        method: "POST", 
-        headers: { "Content-Type": "application/json" }, 
-        body: JSON.stringify(monthData) 
+      const response = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(monthData),
       })
 
       if (!response.ok) {
@@ -481,53 +343,49 @@ export default function ExpenseTracker() {
         throw new Error(data.error || "Erreur lors de la création")
       }
 
-      toast({ title: "Nouveau mois créé !" })
-      // Ici le rechargement est nécessaire : le serveur remplit les charges fixes par défaut
+      toast({ title: "Mois créé" })
+      // Rechargement nécessaire : le serveur reprend les charges fixes par défaut.
       await fetchAllMonths()
+      await fetchMonthData(newMonthInput)
       setNewMonthInput("")
       setNewMonthSalary("")
       setIsNewMonthDialogOpen(false)
     } catch (error) {
       console.error(error)
-      toast({ 
-        title: "Erreur lors de la création", 
-        description: error instanceof Error ? error.message : "Impossible de joindre le serveur.", 
-        variant: "destructive" 
+      toast({
+        title: "Erreur lors de la création",
+        description: error instanceof Error ? error.message : "Impossible de joindre le serveur.",
+        variant: "destructive",
       })
     }
   }
 
   async function deleteMonth() {
     if (!month || !currentUser) return
-    
-    if (confirm(`Êtes-vous sûr de vouloir supprimer le mois ${month} ?`)) {
-       const res = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, { 
-         method: "DELETE" 
-       })
-       
-       if (res.ok) {
-         toast({ title: "Mois supprimé" })
-         setMonth("")
-         setSalary("")
-         setExpenses([])
-         setFixedExpenses([])
-         setExtraIncomes([])
-         fetchAllMonths()
-       } else {
-         toast({ title: "Erreur suppression", variant: "destructive" })
-       }
+    if (!confirm(`Supprimer ${monthLabel(month)} et toutes ses dépenses ?`)) return
+
+    const res = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, { method: "DELETE" })
+    if (res.ok) {
+      toast({ title: "Mois supprimé" })
+      setMonth("")
+      setSalary("")
+      setExpenses([])
+      setFixedExpenses([])
+      setExtraIncomes([])
+      fetchAllMonths()
+    } else {
+      toast({ title: "Erreur suppression", variant: "destructive" })
     }
   }
 
-  // Corriger la date (YYYY-MM) du mois sélectionné : on recrée le mois sous la
-  // nouvelle date avec les mêmes données, puis on supprime l'ancien.
+  // Recrée le mois sous la nouvelle date avec les mêmes données, puis supprime l'ancien.
   async function renameMonth(e: FormEvent) {
     e.preventDefault()
     if (!month || !currentUser) return
 
     const target = editMonthInput.trim()
     if (!/^\d{4}-\d{2}$/.test(target)) {
-      toast({ title: "Format invalide", description: "Utilisez YYYY-MM (ex : 2026-09).", variant: "destructive" })
+      toast({ title: "Format invalide", description: "Utilise AAAA-MM, par exemple 2026-09.", variant: "destructive" })
       return
     }
     if (target === month) {
@@ -535,13 +393,12 @@ export default function ExpenseTracker() {
       return
     }
     if (allMonths.includes(target)) {
-      toast({ title: "Mois déjà existant", description: `${target} existe déjà.`, variant: "destructive" })
+      toast({ title: "Ce mois existe déjà", description: monthLabel(target), variant: "destructive" })
       return
     }
 
     try {
       setIsLoading(true)
-      // 1. Créer/écraser le mois sous la nouvelle date avec les données actuelles
       const createRes = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -557,17 +414,16 @@ export default function ExpenseTracker() {
       })
       if (!createRes.ok) throw new Error("create")
 
-      // 2. Supprimer l'ancien mois
       const delRes = await fetch(`/api/expenses?month=${month}&user=${currentUser}`, { method: "DELETE" })
       if (!delRes.ok) throw new Error("delete")
 
-      // 3. Reporter la référence du solde de départ si elle pointait sur l'ancien mois
+      // Reporte la référence du solde de départ si elle pointait sur l'ancien mois.
       if (initialSavingsMonth === month) {
         await saveProjects(projects, initialSavings, target)
         setInitialSavingsMonth(target)
       }
 
-      toast({ title: "Date du mois corrigée", description: `${month} → ${target}` })
+      toast({ title: "Date corrigée", description: `${monthLabel(month)} → ${monthLabel(target)}` })
       setMonth(target)
       setIsEditMonthOpen(false)
       await fetchAllMonths()
@@ -580,18 +436,17 @@ export default function ExpenseTracker() {
   }
 
   // ==========================================
-  // 6. GESTION DES DÉPENSES
+  // 6. Dépenses
   // ==========================================
-  // Logique partagée entre le formulaire d'ajout, les suggestions rapides et le bouton flottant
   async function logExpense(expAmount: number, expDescription: string, expCategory: string) {
     if (!expAmount) return false
 
     const newExp: Expense = {
       id: Date.now().toString(),
       amount: expAmount,
-      description: expDescription.trim() || categories.find(c => c.id === expCategory)?.name || "Dépense",
+      description: expDescription.trim() || categories.find((c) => c.id === expCategory)?.name || "Dépense",
       category: expCategory,
-      date: new Date().toISOString().split("T")[0]
+      date: new Date().toISOString().split("T")[0],
     }
 
     const newExps = [newExp, ...expenses]
@@ -599,21 +454,20 @@ export default function ExpenseTracker() {
     if (await saveData(newExps, fixedExpenses)) {
       setExpenses(newExps)
 
-      // Le total post-ajout doit venir de newExps (données fraîches), jamais de `expenses`
-      // juste après un setState, dont la mise à jour n'est pas synchrone.
+      // Le total post-ajout vient de newExps : `expenses` n'est pas encore à jour.
       const budget = categoryBudgets[expCategory]
       const categoryTotal = newExps
-        .filter(e => e.category === expCategory)
+        .filter((e) => e.category === expCategory)
         .reduce((sum, e) => sum + e.amount, 0)
 
       if (budget && categoryTotal > budget) {
         toast({
           title: "Budget dépassé",
-          description: `${categories.find(c => c.id === expCategory)?.name}: ${categoryTotal.toFixed(2)}€ / ${budget}€`,
+          description: `${categories.find((c) => c.id === expCategory)?.name} : ${euros(categoryTotal)} sur ${euros(budget)}`,
           variant: "destructive",
         })
       } else {
-        toast({ title: "Dépense ajoutée" })
+        toast({ title: "Dépense notée" })
       }
       return true
     }
@@ -632,10 +486,6 @@ export default function ExpenseTracker() {
     }
   }
 
-  async function quickLogSuggestion(sugg: { amount: number; description: string; category: string }) {
-    await logExpense(sugg.amount, sugg.description, sugg.category)
-  }
-
   async function deleteExpense(id: string) {
     const newExps = expenses.filter((e) => e.id !== id)
     if (await saveData(newExps, fixedExpenses)) {
@@ -645,7 +495,7 @@ export default function ExpenseTracker() {
   }
 
   // ==========================================
-  // 6bis. GESTION DES CATÉGORIES PERSONNALISÉES
+  // 7. Catégories et budgets
   // ==========================================
   async function saveCustomCategories(newList: Category[]) {
     if (!currentUser) return false
@@ -653,11 +503,7 @@ export default function ExpenseTracker() {
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          isCategoryUpdate: true,
-          username: currentUser,
-          customCategories: newList,
-        }),
+        body: JSON.stringify({ isCategoryUpdate: true, username: currentUser, customCategories: newList }),
       })
       return res.ok
     } catch (error) {
@@ -674,7 +520,7 @@ export default function ExpenseTracker() {
       .trim()
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[̀-ͯ]/g, "")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "")
 
@@ -683,17 +529,15 @@ export default function ExpenseTracker() {
       return
     }
 
-    const newCat: Category = { id, name: newCategoryName.trim(), color: newCategoryColor }
-    const newList = [...customCategories, newCat]
-
+    const newList = [...customCategories, { id, name: newCategoryName.trim(), color: newCategoryColor }]
     if (await saveCustomCategories(newList)) {
       setCustomCategories(newList)
       setCategory(id)
       setNewCategoryName("")
-      setNewCategoryColor(COLORS[0])
+      setNewCategoryColor(CUSTOM_CATEGORY_COLORS[0])
       toast({ title: "Catégorie ajoutée" })
     } else {
-      toast({ title: "Erreur lors de l'ajout de la catégorie", variant: "destructive" })
+      toast({ title: "Erreur lors de l'ajout", variant: "destructive" })
     }
   }
 
@@ -714,27 +558,23 @@ export default function ExpenseTracker() {
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          isBudgetUpdate: true,
-          username: currentUser,
-          categoryBudgets: newBudgets,
-        }),
+        body: JSON.stringify({ isBudgetUpdate: true, username: currentUser, categoryBudgets: newBudgets }),
       })
-      if (res.ok) {
-        toast({ title: "Budgets enregistrés" })
-      } else {
-        toast({ title: "Erreur lors de l'enregistrement des budgets", variant: "destructive" })
-      }
+      toast(
+        res.ok
+          ? { title: "Budgets enregistrés" }
+          : { title: "Erreur lors de l'enregistrement", variant: "destructive" }
+      )
       return res.ok
     } catch (error) {
       console.error(error)
-      toast({ title: "Erreur lors de l'enregistrement des budgets", variant: "destructive" })
+      toast({ title: "Erreur lors de l'enregistrement", variant: "destructive" })
       return false
     }
   }
 
   // ==========================================
-  // 6ter. GESTION DES PROJETS & DU SOLDE INITIAL
+  // 8. Projets et solde de départ
   // ==========================================
   async function saveProjects(
     newProjects: Project[],
@@ -764,20 +604,22 @@ export default function ExpenseTracker() {
   async function addProject(e: FormEvent) {
     e.preventDefault()
     if (!newProjectName.trim() || !newProjectAmount || !newProjectMonth) {
-      toast({ title: "Champs requis", description: "Nom, montant et mois cible sont obligatoires.", variant: "destructive" })
+      toast({ title: "Champs requis", description: "Nom, montant et mois cible.", variant: "destructive" })
       return
     }
 
-    const newProject: Project = {
-      id: Date.now().toString(),
-      name: newProjectName.trim(),
-      amount: parseFloat(newProjectAmount),
-      targetMonth: newProjectMonth,
-      type: newProjectType,
-      included: true,
-    }
+    const newList = [
+      ...projects,
+      {
+        id: Date.now().toString(),
+        name: newProjectName.trim(),
+        amount: parseFloat(newProjectAmount),
+        targetMonth: newProjectMonth,
+        type: newProjectType,
+        included: true,
+      },
+    ]
 
-    const newList = [...projects, newProject]
     if (await saveProjects(newList)) {
       setProjects(newList)
       setNewProjectName("")
@@ -786,21 +628,22 @@ export default function ExpenseTracker() {
       setNewProjectType("achat")
       toast({ title: "Projet ajouté" })
     } else {
-      toast({ title: "Erreur lors de l'ajout du projet", variant: "destructive" })
+      toast({ title: "Erreur lors de l'ajout", variant: "destructive" })
     }
   }
 
   async function toggleProjectIncluded(id: string) {
-    const newList = projects.map(p => p.id === id ? { ...p, included: !p.included } : p)
-    setProjects(newList) // feedback immédiat pour la simulation
+    const previous = projects
+    const newList = projects.map((p) => (p.id === id ? { ...p, included: !p.included } : p))
+    setProjects(newList) // la simulation réagit tout de suite
     if (!(await saveProjects(newList))) {
       toast({ title: "Erreur d'enregistrement", variant: "destructive" })
-      setProjects(projects) // rollback
+      setProjects(previous)
     }
   }
 
   async function deleteProject(id: string) {
-    const newList = projects.filter(p => p.id !== id)
+    const newList = projects.filter((p) => p.id !== id)
     if (await saveProjects(newList)) {
       setProjects(newList)
       toast({ title: "Projet supprimé" })
@@ -811,37 +654,34 @@ export default function ExpenseTracker() {
 
   async function saveInitialSavings() {
     const value = parseFloat(initialSavingsInput) || 0
-    // On horodate le solde au mois de la fiche consultée : l'épargne est cumulée
-    // à partir de ce mois (inclus). On colle ainsi à ce que l'utilisateur voit.
+    // Le solde est daté du mois consulté : l'épargne est cumulée à partir de là.
     const refMonth = month || currentMonthStr
     if (await saveProjects(projects, value, refMonth)) {
       setInitialSavings(value)
       setInitialSavingsMonth(refMonth)
-      toast({ title: `Solde de départ enregistré (référence ${refMonth})` })
+      toast({ title: `Solde enregistré, référence ${monthLabel(refMonth)}` })
     } else {
       toast({ title: "Erreur d'enregistrement", variant: "destructive" })
     }
   }
 
   // ==========================================
-  // 6quater. GESTION DES REVENUS SUPPLÉMENTAIRES
+  // 9. Revenus supplémentaires et charges fixes
   // ==========================================
   async function addExtraIncome(e: FormEvent) {
     e.preventDefault()
     if (!incomeAmount || !incomeDescription.trim()) return
 
-    const newIncome: IncomeEntry = {
-      id: Date.now().toString(),
-      amount: parseFloat(incomeAmount),
-      description: incomeDescription.trim(),
-    }
-    const newList = [...extraIncomes, newIncome]
+    const newList = [
+      ...extraIncomes,
+      { id: Date.now().toString(), amount: parseFloat(incomeAmount), description: incomeDescription.trim() },
+    ]
 
     if (await saveData(expenses, fixedExpenses, month, parseFloat(salary), parseFloat(savingsGoalInput), newList)) {
       setExtraIncomes(newList)
       setIncomeAmount("")
       setIncomeDescription("")
-      toast({ title: "Revenu supplémentaire ajouté" })
+      toast({ title: "Revenu ajouté" })
     }
   }
 
@@ -853,1583 +693,1287 @@ export default function ExpenseTracker() {
     }
   }
 
-  // ==========================================
-  // 7. GESTION DES CHARGES FIXES
-  // ==========================================
-  async function addFixedExpense(e: FormEvent) {
+  function openFixedForm(fx?: FixedExpense) {
+    if (fx) {
+      setEditingFixedExpense(fx)
+      setFixedAmount(fx.amount.toString())
+      setFixedDescription(fx.description)
+      setIsExceptional(fx.isExceptional || false)
+    } else {
+      setEditingFixedExpense(null)
+      setFixedAmount("")
+      setFixedDescription("")
+      setIsExceptional(false)
+    }
+    setIsFixedFormOpen(true)
+  }
+
+  async function submitFixedExpense(e: FormEvent) {
     e.preventDefault()
     if (!fixedAmount || !fixedDescription) return
 
-    const newFixed: FixedExpense = { 
-      id: Date.now().toString(), 
-      amount: parseFloat(fixedAmount), 
-      description: fixedDescription 
-    }
+    const updated = editingFixedExpense
+      ? fixedExpenses.map((x) =>
+          x.id === editingFixedExpense.id
+            ? { ...x, amount: parseFloat(fixedAmount), description: fixedDescription, isExceptional }
+            : x
+        )
+      : [
+          ...fixedExpenses,
+          { id: Date.now().toString(), amount: parseFloat(fixedAmount), description: fixedDescription, isExceptional },
+        ]
 
-    const newFixedList = [...fixedExpenses, newFixed]
-    
-    if (await saveData(expenses, newFixedList)) {
-      setFixedExpenses(newFixedList)
+    if (await saveData(expenses, updated)) {
+      setFixedExpenses(updated)
+      setIsFixedFormOpen(false)
+      setEditingFixedExpense(null)
       setFixedAmount("")
       setFixedDescription("")
-      toast({ title: "Charge ajoutée" })
+      setIsExceptional(false)
+      toast({ title: editingFixedExpense ? "Charge modifiée" : "Charge ajoutée" })
     }
   }
 
   async function deleteFixedExpense(id: string) {
     const newFixed = fixedExpenses.filter((e) => e.id !== id)
-    if (await saveData(expenses, newFixed)) { 
+    if (await saveData(expenses, newFixed)) {
       setFixedExpenses(newFixed)
-      toast({ title: "Charge supprimée" }) 
+      toast({ title: "Charge supprimée" })
     }
   }
 
-  function startEditFixedExpense(fx: FixedExpense) {
-    setEditingFixedExpense(fx)
-    setFixedAmount(fx.amount.toString())
-    setFixedDescription(fx.description)
-    setIsExceptional(fx.isExceptional || false)
+  async function saveSalary(value: string) {
+    const parsed = parseFloat(value) || 0
+    if (await saveData(expenses, fixedExpenses, month, parsed)) {
+      setSalary(value)
+      toast({ title: "Revenu enregistré" })
+    }
   }
 
-  async function saveEditFixedExpense() {
-    if (!editingFixedExpense || !fixedAmount || !fixedDescription) return false
-    
-    const updated = fixedExpenses.map((e) => 
-      e.id === editingFixedExpense.id 
-        ? { ...e, amount: parseFloat(fixedAmount), description: fixedDescription, isExceptional } 
-        : e
-    )
-    
-    if (await saveData(expenses, updated)) {
-      setFixedExpenses(updated)
-      setEditingFixedExpense(null)
-      setFixedAmount("")
-      setFixedDescription("")
-      setIsExceptional(false)
-      toast({ title: "Charge modifiée" })
-      return true
-    } 
-    return false
+  async function saveSavingsGoal(value: string) {
+    const parsed = parseFloat(value) || 0
+    if (await saveData(expenses, fixedExpenses, month, parseFloat(salary), parsed)) {
+      setSavingsGoalInput(value)
+      toast({ title: "Objectif enregistré" })
+    }
   }
 
   // ==========================================
-  // 8. CALCULS & STATISTIQUES
+  // 10. Export
   // ==========================================
-  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
-  const totalFixed = fixedExpenses.reduce((sum, e) => sum + e.amount, 0)
-  const numericSalary = parseFloat(salary) || 0
-  const totalExtraIncome = extraIncomes.reduce((sum, i) => sum + i.amount, 0)
-  // Revenus totaux = salaire + revenus supplémentaires
-  const totalIncome = numericSalary + totalExtraIncome
-  const totalOut = totalExpenses + totalFixed
-  const balance = totalIncome - totalOut
+  function exportCsv() {
+    const csv = toCsv(allMonthsData, categories)
+    // Le BOM force Excel à lire l'UTF-8 : sans lui les accents sont cassés.
+    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `thrift-${currentUser}-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    toast({ title: "Export téléchargé" })
+  }
 
-  // Pour la barre de progression (max 100%)
-  const progress = totalIncome > 0 ? (totalOut / totalIncome) * 100 : 0
-  
-  // Filtrage des dépenses
-  const filteredExpenses = selectedCategory 
-    ? expenses.filter((e) => e.category === selectedCategory) 
-    : expenses
-  
-  // Préparation des données pour le graphique Recharts
-  const chartData = categories.map(cat => {
-    const val = expenses
-      .filter(e => e.category === cat.id)
-      .reduce((acc, curr) => acc + curr.amount, 0)
-    return { name: cat.name, value: val, color: cat.color }
-  }).filter(item => item.value > 0)
-
-  // Total dépensé par catégorie ce mois (pour les budgets et les conseils)
-  const categorySpendById: Record<string, number> = {}
-  categories.forEach(cat => {
-    categorySpendById[cat.id] = expenses
-      .filter(e => e.category === cat.id)
-      .reduce((sum, e) => sum + e.amount, 0)
+  // ==========================================
+  // 11. Dérivés
+  // ==========================================
+  const totals = computeTotals({
+    salary: parseFloat(salary) || 0,
+    expenses,
+    fixedExpenses,
+    extraIncomes,
   })
+  const spend = spendByCategory(expenses, categories)
+  const overBudget = overBudgetCategories(categories, spend, categoryBudgets)
+  const pacing = weeklyPacing(month, totals.balance)
+  const daysLeft = daysLeftInMonth(month)
 
-  // Catégories en dépassement de budget (l'épargne n'est jamais un "dépassement")
-  const overBudgetCategories = categories
-    .filter(cat => cat.id !== "epargne" && categoryBudgets[cat.id] && categorySpendById[cat.id] > categoryBudgets[cat.id])
-    .map(cat => ({ ...cat, spent: categorySpendById[cat.id], budget: categoryBudgets[cat.id] }))
-
-  const hasAnyBudget = categories.some(cat => cat.id !== "epargne" && categoryBudgets[cat.id])
-
-  // Rythme hebdomadaire : uniquement pertinent si le mois affiché est le mois réel en cours
-  const now = new Date()
-  const currentMonthStr = `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}`
-  let weeklyPacing: { isOver: boolean; value: number } | null = null
-  if (month === currentMonthStr) {
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-    const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-    const daysRemaining = Math.round((lastDayOfMonth.getTime() - today.getTime()) / 86400000) + 1
-    const weeksRemaining = Math.max(1, Math.ceil(daysRemaining / 7))
-    weeklyPacing = balance >= 0
-      ? { isOver: false, value: balance / weeksRemaining }
-      : { isOver: true, value: Math.abs(balance) }
-  }
-
-  // Objectif d'épargne du mois (basé sur la catégorie "epargne" déjà utilisée pour logger l'épargne)
-  const epargneTotal = categorySpendById["epargne"] || 0
   const savingsGoalNum = parseFloat(savingsGoalInput) || 0
-  const savingsProgress = savingsGoalNum > 0 ? Math.min(100, (epargneTotal / savingsGoalNum) * 100) : 0
+  const savedThisMonth = spend["epargne"] || 0
+  const savingsProgress = savingsGoalNum > 0 ? Math.min(100, (savedThisMonth / savingsGoalNum) * 100) : 0
 
-  // Suggestions de dépenses fréquentes (top 3 tous mois confondus, pour un relog en un clic).
-  // Regroupées par catégorie + description uniquement (pas le montant) : une dépense récurrente
-  // à prix variable (courses, essence...) ne doit pas être éclatée en une entrée par montant,
-  // chacune ne comptant alors qu'une fois — ce qui laissait un achat ponctuel arriver à égalité
-  // et gagner par hasard d'ordre. Le montant le plus récent est conservé pour le relog rapide.
-  const expenseFrequency = new Map<string, { amount: number; description: string; category: string; count: number; lastDate: string }>()
-  allMonthsData.flatMap(m => m.expenses).forEach(e => {
-    const key = `${e.category}|${e.description}`
-    const existing = expenseFrequency.get(key)
-    if (existing) {
-      existing.count += 1
-      if (e.date >= existing.lastDate) {
-        existing.amount = e.amount
-        existing.lastDate = e.date
-      }
-    } else {
-      expenseFrequency.set(key, { amount: e.amount, description: e.description, category: e.category, count: 1, lastDate: e.date })
-    }
-  })
-  const frequentSuggestions = Array.from(expenseFrequency.values())
-    .filter(combo => combo.count >= 2 && categories.some(c => c.id === combo.category))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 3)
+  const suggestions = frequentSuggestions(allMonthsData, categories)
+  const history = useMemo(() => monthlyHistory(allMonthsData), [allMonthsData])
+  const comparison = useMemo(
+    () => compareToPreviousMonth(allMonthsData, month, categories),
+    [allMonthsData, month, categories]
+  )
+  const projection = useMemo(
+    () => buildProjection({ months: allMonthsData, projects, initialSavings, initialSavingsMonth }),
+    [allMonthsData, projects, initialSavings, initialSavingsMonth]
+  )
 
-  // ==========================================
-  // 8bis. PROJECTION D'ÉPARGNE & PROJETS
-  // ==========================================
-  // Épargne réelle de chaque mois = uniquement ce qui est explicitement rangé dans
-  // la catégorie "Epargne" (via l'ajout rapide). Le reste à vivre n'est PAS compté.
-  const netByMonth = new Map<string, number>()
-  allMonthsData.forEach(m => {
-    const net = m.expenses
-      .filter(e => e.category === "epargne")
-      .reduce((s, e) => s + e.amount, 0)
-    netByMonth.set(m.month, net)
-  })
+  // Barres « où ça part » : les dépenses variables, hors épargne qui n'est pas une sortie.
+  const spendRows = categories
+    .filter((c) => c.id !== "epargne")
+    .map((c) => ({ category: c, spent: spend[c.id] || 0, budget: categoryBudgets[c.id] }))
 
-  // Ajoute n mois à une chaîne "YYYY-MM"
-  function addMonths(ym: string, n: number): string {
-    const [y, mo] = ym.split("-").map(Number)
-    const d = new Date(y, (mo - 1) + n, 1)
-    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}`
-  }
+  // Historique filtré : recherche plein texte, catégorie, portée.
+  const searchPool = useMemo(() => {
+    const pool = scopeAllMonths
+      ? allMonthsData.flatMap((m) => m.expenses.map((e) => ({ ...e, month: m.month })))
+      : expenses.map((e) => ({ ...e, month }))
+    return pool.sort((a, b) => b.date.localeCompare(a.date))
+  }, [scopeAllMonths, allMonthsData, expenses, month])
 
-  const includedProjects = projects.filter(p => p.included)
-  const hasStartingBalance = initialSavings > 0 && !!initialSavingsMonth
+  const filteredExpenses = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return searchPool.filter((e) => {
+      if (filterCategory && e.category !== filterCategory) return false
+      if (!q) return true
+      const label = categories.find((c) => c.id === e.category)?.name ?? ""
+      return e.description.toLowerCase().includes(q) || label.toLowerCase().includes(q) || e.amount.toFixed(2).includes(q)
+    })
+  }, [searchPool, query, filterCategory, categories])
 
-  // ANCRAGE DATÉ DU SOLDE DE DÉPART :
-  // Le solde de départ est daté du mois où il a été renseigné pour la dernière
-  // fois (initialSavingsMonth). On ancre la projection à ce mois, avec ce solde,
-  // puis on ajoute l'épargne (catégorie "Epargne") du mois de référence INCLUS
-  // et de tous les mois suivants.
-  // Ainsi : "solde de départ + épargne depuis (et y compris) le mois renseigné".
-  // Si aucun solde n'a jamais été renseigné, on repart du 1er mois connu à 0.
-  let anchorMonth: string
-  let anchorBalance: number
-
-  if (hasStartingBalance) {
-    anchorMonth = initialSavingsMonth
-    anchorBalance = initialSavings
-  } else {
-    const recorded = [...netByMonth.keys()].sort()
-    anchorMonth = recorded.length > 0 ? recorded[0] : currentMonthStr
-    anchorBalance = 0
-  }
-
-  // Épargne mensuelle moyenne pour extrapoler les mois à venir, estimée sur les
-  // mois enregistrés situés à partir de l'ancre (fenêtre d'observation réelle).
-  const observedFromAnchor = [...netByMonth.keys()].filter(mo => mo >= anchorMonth)
-  const avgNet = observedFromAnchor.length > 0
-    ? observedFromAnchor.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / observedFromAnchor.length
-    : 0
-
-  // Fin de la timeline : de l'ancre jusqu'au dernier mois avec données / dernière
-  // échéance de projet inclus (les échéances passées sont ignorées).
-  const endCandidates = [
-    anchorMonth,
-    currentMonthStr,
-    ...[...netByMonth.keys()].filter(mo => mo >= anchorMonth),
-    ...includedProjects.map(p => p.targetMonth).filter(mo => mo >= currentMonthStr),
-  ].sort()
-  const endMonth = endCandidates[endCandidates.length - 1]
-
-  // Projets inclus (échéance >= mois en cours) regroupés par mois d'échéance
-  const projectsByMonth = new Map<string, Project[]>()
-  includedProjects.forEach(p => {
-    if (p.targetMonth < currentMonthStr) return
-    const arr = projectsByMonth.get(p.targetMonth) || []
-    arr.push(p)
-    projectsByMonth.set(p.targetMonth, arr)
-  })
-
-  // Simulation mois par mois du solde d'épargne cumulé à partir de l'ancre.
-  // L'épargne du mois d'ancrage n'est pas ré-ajoutée (le solde est "à jour").
-  const projectionData: { month: string; solde: number; projected: boolean }[] = []
-  const projectFeasibility = new Map<string, boolean>()
-  let runningBalance = anchorBalance
-  {
-    let cursor = anchorMonth
-    let guard = 0
-    while (cursor <= endMonth && guard < 600) {
-      const isRecorded = netByMonth.has(cursor)
-      // On n'extrapole (avgNet) que les mois STRICTEMENT futurs. Le mois en cours
-      // et les mois passés sans donnée valent 0 (épargne réellement enregistrée).
-      // L'épargne du mois d'ancrage est comptée elle aussi (référence incluse).
-      const isFuture = cursor > currentMonthStr
-      runningBalance += isRecorded
-        ? (netByMonth.get(cursor) as number)
-        : (isFuture ? avgNet : 0)
-      // On règle les projets échéant ce mois-ci
-      const due = projectsByMonth.get(cursor) || []
-      due.forEach(p => {
-        projectFeasibility.set(p.id, runningBalance >= p.amount)
-        runningBalance -= p.amount
-      })
-      projectionData.push({
-        month: cursor,
-        solde: Math.round(runningBalance * 100) / 100,
-        projected: isFuture && !isRecorded,
-      })
-      cursor = addMonths(cursor, 1)
-      guard++
-    }
-  }
-
-  // Épargne "actuelle" = solde de départ + épargne cumulée jusqu'au mois en cours
-  // (soit la valeur de la projection au mois courant).
-  const currentPoint = projectionData.find(p => p.month === currentMonthStr)
-  const currentSavings = currentPoint ? currentPoint.solde : anchorBalance
-  const projectedFinalSavings =
-    projectionData.length > 0 ? projectionData[projectionData.length - 1].solde : currentSavings
-  const hasNegativeProjection = projectionData.some(p => p.solde < 0)
-
-  const projectTypeMeta: Record<ProjectType, { label: string; color: string }> = {
-    voyage: { label: "Voyage", color: "#8b5cf6" },
-    achat: { label: "Achat", color: "#f59e0b" },
-    projet: { label: "Projet", color: "#3b82f6" },
-  }
+  const filteredTotal = filteredExpenses.reduce((s, e) => s + e.amount, 0)
   const sortedProjects = [...projects].sort((a, b) => a.targetMonth.localeCompare(b.targetMonth))
-  const totalIncludedProjects = includedProjects.reduce((s, p) => s + p.amount, 0)
+  const includedTotal = projects.filter((p) => p.included).reduce((s, p) => s + p.amount, 0)
+
+  const catById = (id: string) => categories.find((c) => c.id === id)
 
   // ==========================================
-  // 9. RENDU : PAGE DE CONNEXION
+  // 12. Rendu
   // ==========================================
   if (!currentUser) {
-    return (
-      <div className="flex min-h-screen bg-slate-50">
-        {/* Partie Gauche : Image / Branding */}
-        <div className="hidden lg:flex w-1/2 bg-slate-900 items-center justify-center relative overflow-hidden">
-             <div className="absolute inset-0 opacity-20 bg-[url('https://images.unsplash.com/photo-1554224155-8d04cb21cd6c?q=80&w=3000&auto=format&fit=crop')] bg-cover bg-center" />
-             <div className="relative z-10 text-white p-12">
-                 <h2 className="text-4xl font-bold mb-6">Maîtrisez vos finances.</h2>
-                 <p className="text-lg text-slate-300">
-                   Une solution simple et élégante pour suivre vos dépenses, gérer vos charges et épargner sereinement.
-                 </p>
-                 <div className="mt-8 flex gap-4">
-                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                       <CheckCircle2 className="h-4 w-4 text-emerald-500"/> Multi-utilisateurs
-                     </div>
-                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                       <CheckCircle2 className="h-4 w-4 text-emerald-500"/> Sécurisé
-                     </div>
-                     <div className="flex items-center gap-2 text-sm text-slate-400">
-                       <CheckCircle2 className="h-4 w-4 text-emerald-500"/> Analytique
-                     </div>
-                 </div>
-             </div>
-        </div>
-
-        {/* Partie Droite : Formulaire */}
-        <div className="w-full lg:w-1/2 flex items-center justify-center p-8">
-            <Card className="w-full max-w-md shadow-xl border-none bg-white/80 backdrop-blur-sm">
-              <CardHeader className="space-y-1">
-                  <CardTitle className="text-2xl font-bold text-center">Connexion</CardTitle>
-                  <CardDescription className="text-center">
-                    Entrez vos identifiants pour accéder à votre espace
-                  </CardDescription>
-              </CardHeader>
-              <CardContent>
-                  <form onSubmit={handleLogin} className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="username">Identifiant</Label>
-                        <div className="relative">
-                            <User className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                            <Input 
-                              id="username" 
-                              placeholder="Pseudo" 
-                              value={usernameInput} 
-                              onChange={(e) => setUsernameInput(e.target.value)} 
-                              className="pl-10 h-11" 
-                              disabled={isLoggingIn} 
-                            />
-                        </div>
-                    </div>
-                    <div className="space-y-2">
-                        <Label htmlFor="password">Mot de passe</Label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                            <Input 
-                              id="password" 
-                              type="password" 
-                              placeholder="••••••••" 
-                              value={passwordInput} 
-                              onChange={(e) => setPasswordInput(e.target.value)} 
-                              className="pl-10 h-11" 
-                              disabled={isLoggingIn} 
-                            />
-                        </div>
-                    </div>
-                    <Button 
-                      type="submit" 
-                      className="w-full h-11 bg-slate-900 hover:bg-slate-800 transition-all" 
-                      disabled={isLoggingIn}
-                    >
-                        {isLoggingIn ? "Authentification..." : "Se connecter"} 
-                        <ArrowRight className="ml-2 h-4 w-4"/>
-                    </Button>
-                  </form>
-              </CardContent>
-            </Card>
-        </div>
-      </div>
-    )
+    return <Login onSubmit={handleLogin} busy={isLoggingIn} />
   }
 
-  // ==========================================
-  // 10. RENDU : APPLICATION PRINCIPALE
-  // ==========================================
   return (
-    <div className="min-h-screen bg-slate-50/50 pb-20">
-      
-      {/* --- NAVBAR --- */}
-      <nav className="sticky top-0 z-30 border-b bg-white/80 backdrop-blur-md px-4 py-3 shadow-sm">
-        <div className="container mx-auto flex justify-between items-center max-w-7xl">
-             <div className="flex items-center gap-2">
-                 <div className="bg-slate-900 p-2 rounded-lg">
-                   <Wallet className="h-5 w-5 text-white" />
-                 </div>
-                 <span className="font-bold text-lg text-slate-800 hidden md:block">
-                   FinancePro
-                 </span>
-             </div>
-             <div className="flex items-center gap-4">
-                 <div className="flex flex-col text-right">
-                     <span className="text-xs text-slate-500">Compte</span>
-                     <span className="text-sm font-semibold text-slate-900">{currentUser}</span>
-                 </div>
-                 <div className="h-9 w-9 bg-gradient-to-tr from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-bold shadow-md uppercase">
-                     {currentUser.charAt(0)}
-                 </div>
-                 <Button 
-                   variant="ghost" 
-                   size="icon" 
-                   onClick={handleLogout} 
-                   className="text-slate-500 hover:text-red-600 transition-colors"
-                 >
-                     <LogOut className="h-5 w-5" />
-                 </Button>
-             </div>
-        </div>
-      </nav>
+    <div className="min-h-[100svh]" style={{ backgroundColor: "var(--t-ink)" }}>
+      {/* Barre haute */}
+      <header
+        className="sticky top-0 z-30 border-b"
+        style={{ backgroundColor: "var(--t-ink)", borderColor: "var(--t-line)" }}
+      >
+        <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
+          <Wordmark />
 
-      <div className="container mx-auto py-8 px-4 max-w-7xl">
-        
-        {/* --- HEADER & SÉLECTEUR DE MOIS --- */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-            <div>
-                <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Tableau de Bord</h1>
-                <p className="text-slate-500 mt-1">
-                  Aperçu financier pour <span className="font-semibold text-slate-700">{month || "..."}</span>
-                </p>
-            </div>
-            
-            <div className="flex items-center gap-2 bg-white p-1 rounded-lg border shadow-sm">
-                <Select onValueChange={fetchMonthData} value={month}>
-                  <SelectTrigger className="w-[160px] border-none shadow-none focus:ring-0 font-medium">
-                    <SelectValue placeholder="Sélectionner" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {allMonths.length === 0 && <SelectItem value="none" disabled>Aucun mois</SelectItem>}
-                    {allMonths.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-
-                {month && (
-                    <Dialog
-                      open={isEditMonthOpen}
-                      onOpenChange={(open) => {
-                        setIsEditMonthOpen(open)
-                        if (open) setEditMonthInput(month)
-                      }}
-                    >
-                        <DialogTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-slate-400 hover:text-slate-900"
-                            title="Corriger la date du mois"
-                          >
-                              <Edit className="h-4 w-4" />
-                          </Button>
-                        </DialogTrigger>
-                        <DialogContent>
-                            <DialogHeader>
-                              <DialogTitle>Corriger la date du mois</DialogTitle>
-                              <DialogDescription>
-                                Modifie l'année/le mois de cette fiche. Les données (salaire, dépenses, charges) sont conservées.
-                              </DialogDescription>
-                            </DialogHeader>
-                            <form onSubmit={renameMonth} className="space-y-4 pt-2">
-                                <div className="space-y-2">
-                                  <Label>Mois (YYYY-MM)</Label>
-                                  <Input
-                                    placeholder="2026-09"
-                                    value={editMonthInput}
-                                    onChange={e => setEditMonthInput(e.target.value)}
-                                    autoFocus
-                                  />
-                                </div>
-                                <Button type="submit" className="w-full bg-slate-900" disabled={isLoading}>
-                                  Enregistrer la correction
-                                </Button>
-                            </form>
-                        </DialogContent>
-                    </Dialog>
-                )}
-
-                {month && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-slate-400 hover:text-red-500"
-                      onClick={deleteMonth}
-                    >
-                        <Trash2 className="h-4 w-4" />
-                    </Button>
-                )}
-
-                <Dialog
-                  open={isNewMonthDialogOpen}
-                  onOpenChange={(open) => {
-                    setIsNewMonthDialogOpen(open)
-                    if (open) {
-                      setNewMonthInput(getSuggestedNextMonth())
-                      setNewMonthSalary(salary || newMonthSalary)
-                    }
-                  }}
-                >
-                    <DialogTrigger asChild>
-                      <Button size="sm" className="bg-slate-900 text-white shadow-sm hover:bg-slate-800">
-                        <Plus className="h-4 w-4 mr-1"/> Nouveau
-                      </Button>
-                    </DialogTrigger>
-                    <DialogContent>
-                        <DialogHeader>
-                          <DialogTitle>Créer un nouveau mois</DialogTitle>
-                          <DialogDescription>
-                            Le mois suivant est proposé automatiquement, mais vous pouvez le modifier librement.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <form onSubmit={createNewMonth} className="space-y-4 pt-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-2">
-                                  <Label>Mois (YYYY-MM)</Label>
-                                  <Input
-                                    placeholder="2025-06"
-                                    value={newMonthInput}
-                                    onChange={e => setNewMonthInput(e.target.value)}
-                                  />
-                                </div>
-                                <div className="space-y-2">
-                                  <Label>Salaire Est.</Label>
-                                  <Input
-                                    type="number"
-                                    placeholder="2000"
-                                    value={newMonthSalary}
-                                    onChange={e => setNewMonthSalary(e.target.value)}
-                                  />
-                                </div>
-                            </div>
-                            <Button type="submit" className="w-full bg-slate-900">Créer</Button>
-                        </form>
-                    </DialogContent>
-                </Dialog>
-            </div>
-        </div>
-
-        {/* --- CONTENU PRINCIPAL --- */}
-        {month === "" ? (
-            <div className="flex flex-col items-center justify-center py-20 bg-white border border-dashed rounded-xl shadow-sm">
-                <div className="bg-slate-50 p-4 rounded-full mb-4">
-                  <Calendar className="h-8 w-8 text-slate-400" />
-                </div>
-                <h3 className="text-lg font-medium text-slate-900">Aucune donnée affichée</h3>
-                <p className="text-slate-500 text-sm mt-1 max-w-sm text-center">
-                  Sélectionnez un mois existant dans le menu ci-dessus ou créez-en un nouveau pour commencer.
-                </p>
-            </div>
-        ) : (
-            <>
-            {/* KPI CARDS (Indicateurs Clés) */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                
-                {/* 1. Revenus */}
-                <Card className="shadow-sm border-slate-200 hover:shadow-md transition-shadow">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-slate-500">Revenus Nets</CardTitle>
-                        <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                          <DollarSign className="h-4 w-4 text-emerald-600" />
-                        </div>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-slate-900">{totalIncome.toFixed(2)} €</div>
-                        {totalExtraIncome > 0 ? (
-                            <p className="text-xs text-slate-500 mt-1">
-                              Salaire {numericSalary.toFixed(2)} € + suppl. {totalExtraIncome.toFixed(2)} €
-                            </p>
-                        ) : (
-                            <div className="flex items-center text-xs text-emerald-600 mt-1 bg-emerald-50 w-fit px-2 py-0.5 rounded-full">
-                                <TrendingUp className="h-3 w-3 mr-1" /> Entrées
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-
-                {/* 2. Charges Fixes */}
-                <Card className="shadow-sm border-slate-200 hover:shadow-md transition-shadow">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-slate-500">Charges Fixes</CardTitle>
-                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                          <Activity className="h-4 w-4 text-blue-600" />
-                        </div>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-slate-900">{totalFixed.toFixed(2)} €</div>
-                        <p className="text-xs text-slate-500 mt-1">Récurrent mensuel</p>
-                    </CardContent>
-                </Card>
-
-                {/* 3. Dépenses Variables */}
-                <Card className="shadow-sm border-slate-200 hover:shadow-md transition-shadow">
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-slate-500">Dépenses Variables</CardTitle>
-                        <div className="h-8 w-8 rounded-full bg-orange-100 flex items-center justify-center">
-                          <PieChartIcon className="h-4 w-4 text-orange-600" />
-                        </div>
-                    </CardHeader>
-                    <CardContent>
-                        <div className="text-2xl font-bold text-slate-900">{totalExpenses.toFixed(2)} €</div>
-                        <p className="text-xs text-slate-500 mt-1">{expenses.length} transaction(s)</p>
-                    </CardContent>
-                </Card>
-
-                {/* 4. Reste à Vivre (Balance) */}
-                <Card className={`shadow-sm border-slate-200 hover:shadow-md transition-shadow ${balance < 0 ? 'border-red-200 bg-red-50/30' : 'border-slate-200'}`}>
-                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                        <CardTitle className="text-sm font-medium text-slate-500">Reste à Vivre</CardTitle>
-                        <div className={`h-8 w-8 rounded-full flex items-center justify-center ${balance < 0 ? 'bg-red-100' : 'bg-slate-100'}`}>
-                             <Wallet className={`h-4 w-4 ${balance < 0 ? 'text-red-600' : 'text-slate-900'}`} />
-                        </div>
-                    </CardHeader>
-                    <CardContent>
-                        <div className={`text-2xl font-bold ${balance < 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                          {balance.toFixed(2)} €
-                        </div>
-                        {balance < 0 ? (
-                            <div className="flex items-center text-xs text-red-600 mt-1 bg-red-100 w-fit px-2 py-0.5 rounded-full">
-                                <TrendingDown className="h-3 w-3 mr-1" /> Attention
-                            </div>
-                        ) : (
-                            <div className="flex items-center text-xs text-slate-500 mt-1">
-                                <div className="h-1.5 w-16 bg-slate-200 rounded-full overflow-hidden mr-2">
-                                    <div className="h-full bg-slate-900 rounded-full" style={{width: `${Math.min(progress, 100)}%`}}/>
-                                </div>
-                                {Math.round(progress)}% utilisé
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-            </div>
-
-            {/* --- ONGLETS / TABS --- */}
-            <Tabs defaultValue="overview" className="space-y-6">
-                <TabsList className="bg-white border p-1 rounded-xl shadow-sm w-full md:w-auto grid grid-cols-3 md:grid-cols-5 md:flex h-auto">
-                    <TabsTrigger value="overview" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
-                      Vue d'ensemble
-                    </TabsTrigger>
-                    <TabsTrigger value="expenses" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
-                      Dépenses
-                    </TabsTrigger>
-                    <TabsTrigger value="fixed" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
-                      Charges Fixes
-                    </TabsTrigger>
-                    <TabsTrigger value="projects" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
-                      Projets & Épargne
-                    </TabsTrigger>
-                    <TabsTrigger value="add" className="rounded-lg data-[state=active]:bg-slate-900 data-[state=active]:text-white py-2">
-                      Ajout Rapide
-                    </TabsTrigger>
-                </TabsList>
-
-                {/* --- CONTENU ONGLET 1 : VUE D'ENSEMBLE --- */}
-                <TabsContent value="overview" className="space-y-6">
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <div className="flex flex-col gap-6">
-                            {/* Bloc : Ajustement Salaire */}
-                            <Card className="shadow-sm border-slate-200">
-                                <CardHeader>
-                                  <CardTitle>Ajustement Revenus</CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <form
-                                      onSubmit={async (e) => {
-                                        e.preventDefault();
-                                        if (await saveData(expenses, fixedExpenses, month, parseFloat(salary))) {
-                                          toast({title:"Salaire mis à jour"})
-                                        }
-                                      }}
-                                      className="flex gap-2"
-                                    >
-                                        <Input
-                                          type="number"
-                                          value={salary}
-                                          onChange={e => setSalary(e.target.value)}
-                                          className="font-mono bg-slate-50"
-                                        />
-                                        <Button variant="outline" type="submit">
-                                          <Edit className="h-4 w-4"/>
-                                        </Button>
-                                    </form>
-                                </CardContent>
-                            </Card>
-
-                            {/* Bloc : Revenus supplémentaires */}
-                            <Card className="shadow-sm border-slate-200">
-                                <CardHeader>
-                                  <CardTitle>Revenus supplémentaires</CardTitle>
-                                  <CardDescription>Primes, revenus annexes, cadeaux reçus…</CardDescription>
-                                </CardHeader>
-                                <CardContent className="space-y-3">
-                                    {extraIncomes.length > 0 && (
-                                        <div className="space-y-2">
-                                            {extraIncomes.map((inc) => (
-                                                <div key={inc.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/60 px-3 py-2">
-                                                    <div className="flex items-center gap-2 min-w-0">
-                                                        <div className="p-1.5 rounded-md bg-emerald-100 text-emerald-600 shrink-0">
-                                                          <DollarSign className="h-4 w-4" />
-                                                        </div>
-                                                        <span className="text-sm text-slate-700 truncate">{inc.description}</span>
-                                                    </div>
-                                                    <div className="flex items-center gap-2 shrink-0">
-                                                        <span className="font-semibold text-emerald-600">+{inc.amount.toFixed(2)} €</span>
-                                                        <Button
-                                                          size="icon"
-                                                          variant="ghost"
-                                                          className="h-7 w-7 text-slate-400 hover:text-red-500"
-                                                          onClick={() => deleteExtraIncome(inc.id)}
-                                                        >
-                                                          <Trash2 className="h-3.5 w-3.5" />
-                                                        </Button>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                            <div className="flex items-center justify-between text-sm font-medium text-slate-600 pt-1">
-                                                <span>Total supplémentaire</span>
-                                                <span className="text-emerald-600">+{totalExtraIncome.toFixed(2)} €</span>
-                                            </div>
-                                        </div>
-                                    )}
-                                    <form onSubmit={addExtraIncome} className="flex flex-col gap-2 pt-1">
-                                        <div className="grid grid-cols-3 gap-2">
-                                            <div className="relative col-span-1">
-                                                <Input
-                                                  type="number"
-                                                  step="0.01"
-                                                  placeholder="Montant"
-                                                  value={incomeAmount}
-                                                  onChange={e => setIncomeAmount(e.target.value)}
-                                                  className="pr-5 bg-slate-50"
-                                                />
-                                                <span className="absolute right-2 top-2.5 text-xs text-slate-400">€</span>
-                                            </div>
-                                            <Input
-                                              placeholder="Ex: Prime"
-                                              value={incomeDescription}
-                                              onChange={e => setIncomeDescription(e.target.value)}
-                                              className="col-span-2 bg-slate-50"
-                                            />
-                                        </div>
-                                        <Button type="submit" variant="outline" className="w-full">
-                                          <Plus className="h-4 w-4 mr-1" /> Ajouter un revenu
-                                        </Button>
-                                    </form>
-                                </CardContent>
-                            </Card>
-
-                            {/* Bloc : Objectif d'épargne */}
-                            <Card className="shadow-sm border-slate-200">
-                                <CardHeader>
-                                  <CardTitle>Objectif d'Épargne</CardTitle>
-                                  <CardDescription>Basé sur la catégorie "Epargne"</CardDescription>
-                                </CardHeader>
-                                <CardContent className="space-y-3">
-                                    <form
-                                      onSubmit={async (e) => {
-                                        e.preventDefault()
-                                        if (await saveData(expenses, fixedExpenses, month, parseFloat(salary), parseFloat(savingsGoalInput))) {
-                                          toast({ title: "Objectif d'épargne mis à jour" })
-                                        }
-                                      }}
-                                      className="flex gap-2"
-                                    >
-                                        <Input
-                                          type="number"
-                                          value={savingsGoalInput}
-                                          onChange={e => setSavingsGoalInput(e.target.value)}
-                                          className="font-mono bg-slate-50"
-                                        />
-                                        <Button variant="outline" type="submit">
-                                          <Edit className="h-4 w-4"/>
-                                        </Button>
-                                    </form>
-                                    {savingsGoalNum > 0 && (
-                                        <div>
-                                            <div className="h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
-                                                <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${savingsProgress}%` }} />
-                                            </div>
-                                            <p className="text-xs text-slate-500 mt-1">
-                                              {epargneTotal.toFixed(2)} € / {savingsGoalNum.toFixed(2)} € épargnés
-                                            </p>
-                                        </div>
-                                    )}
-                                </CardContent>
-                            </Card>
-                        </div>
-
-                        {/* Bloc : Graphique Camembert */}
-                        <Card className="lg:col-span-2 shadow-sm border-slate-200">
-                            <CardHeader>
-                                <CardTitle>Répartition des Dépenses</CardTitle>
-                                <CardDescription>Analyse par catégorie</CardDescription>
-                            </CardHeader>
-                            <CardContent className="h-[300px]">
-                                {chartData.length > 0 ? (
-                                    <ResponsiveContainer width="100%" height="100%">
-                                        <PieChart>
-                                            <Pie 
-                                              data={chartData} 
-                                              cx="50%" 
-                                              cy="50%" 
-                                              innerRadius={60} 
-                                              outerRadius={80} 
-                                              paddingAngle={5} 
-                                              dataKey="value"
-                                            >
-                                                {chartData.map((entry, index) => (
-                                                  <Cell key={`cell-${index}`} fill={entry.color} />
-                                                ))}
-                                            </Pie>
-                                            <RechartsTooltip 
-                                              formatter={(value: number) => `${value.toFixed(2)} €`} 
-                                              contentStyle={{borderRadius: '8px', border:'none', boxShadow:'0 4px 12px rgba(0,0,0,0.1)'}} 
-                                            />
-                                            <Legend 
-                                              verticalAlign="middle" 
-                                              align="right" 
-                                              layout="vertical" 
-                                              iconType="circle" 
-                                            />
-                                        </PieChart>
-                                    </ResponsiveContainer>
-                                ) : (
-                                    <div className="h-full flex items-center justify-center text-slate-400 text-sm">
-                                      Pas assez de données pour le graphique
-                                    </div>
-                                )}
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    {/* Bloc : Conseils du mois */}
-                    <Card className="shadow-sm border-slate-200">
-                        <CardHeader>
-                          <CardTitle>Conseils du mois</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-3">
-                            {overBudgetCategories.length > 0 ? (
-                                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3">
-                                    <TrendingDown className="h-4 w-4 mt-0.5 shrink-0" />
-                                    <p>
-                                      Vous avez dépassé votre budget en {" "}
-                                      {overBudgetCategories.map((c, i) => (
-                                        <span key={c.id} className="font-semibold">
-                                          {c.name} ({c.spent.toFixed(2)} € / {c.budget} €){i < overBudgetCategories.length - 1 ? ", " : ""}
-                                        </span>
-                                      ))}.
-                                    </p>
-                                </div>
-                            ) : hasAnyBudget ? (
-                                <div className="flex items-start gap-2 text-sm text-emerald-600 bg-emerald-50 border border-emerald-100 rounded-lg p-3">
-                                    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-                                    <p>Bravo, vous respectez tous vos budgets ce mois-ci !</p>
-                                </div>
-                            ) : (
-                                <p className="text-sm text-slate-500">
-                                  Définissez des budgets par catégorie (bouton + dans "Ajout Rapide") pour recevoir des conseils personnalisés.
-                                </p>
-                            )}
-
-                            {weeklyPacing && (
-                                weeklyPacing.isOver ? (
-                                    <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3">
-                                        <TrendingDown className="h-4 w-4 mt-0.5 shrink-0" />
-                                        <p>Vous êtes déjà en dépassement de {weeklyPacing.value.toFixed(2)} € pour ce mois.</p>
-                                    </div>
-                                ) : (
-                                    <div className="flex items-start gap-2 text-sm text-slate-600 bg-slate-50 border border-slate-100 rounded-lg p-3">
-                                        <Calendar className="h-4 w-4 mt-0.5 shrink-0" />
-                                        <p>Il vous reste <span className="font-semibold">{weeklyPacing.value.toFixed(2)} €/semaine</span> pour finir le mois sereinement.</p>
-                                    </div>
-                                )
-                            )}
-                        </CardContent>
-                    </Card>
-
-                    {/* Bloc : Dernières Transactions */}
-                    <Card className="shadow-sm border-slate-200">
-                        <CardHeader>
-                          <CardTitle>Dernières transactions</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="space-y-0">
-                                {expenses.slice(0, 5).map((exp, i) => (
-                                    <div 
-                                      key={exp.id} 
-                                      className={`flex items-center justify-between py-4 ${i !== expenses.slice(0,5).length-1 ? 'border-b border-slate-100' : ''}`}
-                                    >
-                                        <div className="flex items-center gap-4">
-                                            <div className="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500">
-                                                {exp.category === "alimentation" ? "🍎" : exp.category === "transport" ? "🚗" : "💸"}
-                                            </div>
-                                            <div>
-                                                <p className="font-medium text-slate-900">{exp.description}</p>
-                                                <p className="text-xs text-slate-500">
-                                                  {new Date(exp.date).toLocaleDateString('fr-FR', {day: 'numeric', month: 'long'})} • {categories.find(c=>c.id===exp.category)?.name}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <span className="font-bold text-slate-900">-{exp.amount.toFixed(2)} €</span>
-                                    </div>
-                                ))}
-                                {expenses.length === 0 && (
-                                  <p className="text-center text-slate-500 py-4">Aucune transaction récente.</p>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                {/* --- CONTENU ONGLET 2 : LISTE COMPLÈTE --- */}
-                <TabsContent value="expenses">
-                    <Card className="shadow-sm border-slate-200">
-                        <CardHeader className="flex flex-row items-center justify-between">
-                            <div>
-                              <CardTitle>Historique Dépenses</CardTitle>
-                              <CardDescription>Liste complète des transactions</CardDescription>
-                            </div>
-                            <Select 
-                              value={selectedCategory || "all"} 
-                              onValueChange={v => setSelectedCategory(v === "all" ? null : v)}
-                            >
-                                <SelectTrigger className="w-[180px]">
-                                  <SelectValue placeholder="Filtrer par catégorie" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="all">Tout voir</SelectItem>
-                                  {categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                                </SelectContent>
-                            </Select>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="rounded-md border">
-                                {filteredExpenses.map((exp) => (
-                                    <div 
-                                      key={exp.id} 
-                                      className="flex items-center justify-between p-4 border-b last:border-0 hover:bg-slate-50 transition-colors"
-                                    >
-                                        <div className="flex flex-col">
-                                            <span className="font-medium text-slate-900">{exp.description}</span>
-                                            <div className="flex gap-2 text-xs text-slate-500 items-center mt-1">
-                                                <Badge 
-                                                  variant="secondary" 
-                                                  className="font-normal" 
-                                                  style={{
-                                                    backgroundColor: categories.find(c=>c.id===exp.category)?.color + '20', 
-                                                    color: categories.find(c=>c.id===exp.category)?.color
-                                                  }}
-                                                >
-                                                    {categories.find(c=>c.id===exp.category)?.name}
-                                                </Badge>
-                                                <span>{exp.date}</span>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <span className="font-mono font-bold">-{exp.amount.toFixed(2)} €</span>
-                                            <Button 
-                                              size="icon" 
-                                              variant="ghost" 
-                                              className="h-8 w-8 text-slate-400 hover:text-red-500" 
-                                              onClick={() => deleteExpense(exp.id)}
-                                            >
-                                              <Trash2 className="h-4 w-4"/>
-                                            </Button>
-                                        </div>
-                                    </div>
-                                ))}
-                                {filteredExpenses.length === 0 && (
-                                  <div className="p-8 text-center text-slate-500">Aucun résultat trouvé</div>
-                                )}
-                            </div>
-                        </CardContent>
-                    </Card>
-                </TabsContent>
-
-                {/* --- CONTENU ONGLET 3 : CHARGES FIXES --- */}
-                <TabsContent value="fixed">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Liste des charges */}
-                        <div className="md:col-span-2 space-y-4">
-                            {fixedExpenses.map((fx) => (
-                                <Card 
-                                  key={fx.id} 
-                                  className="shadow-sm border-slate-200 group hover:border-slate-300 transition-all"
-                                >
-                                    <CardContent className="p-4 flex items-center justify-between">
-                                        <div className="flex items-center gap-4">
-                                            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-                                              <Activity className="h-5 w-5"/>
-                                            </div>
-                                            <div>
-                                                <p className="font-semibold text-slate-900">{fx.description}</p>
-                                                {fx.isExceptional && (
-                                                  <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50 mt-1">
-                                                    Ponctuel
-                                                  </Badge>
-                                                )}
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <span className="font-bold text-lg">{fx.amount.toFixed(2)} €</span>
-                                            
-                                            {/* Boutons d'action (visibles au survol) */}
-                                            <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <Dialog>
-                                                    <DialogTrigger asChild>
-                                                      <Button 
-                                                        size="icon" 
-                                                        variant="ghost" 
-                                                        className="h-8 w-8" 
-                                                        onClick={() => { 
-                                                          setEditingFixedExpense(fx); 
-                                                          setFixedAmount(fx.amount.toString()); 
-                                                          setFixedDescription(fx.description); 
-                                                          setIsExceptional(fx.isExceptional || false) 
-                                                        }}
-                                                      >
-                                                        <Edit className="h-4 w-4"/>
-                                                      </Button>
-                                                    </DialogTrigger>
-                                                    <DialogContent>
-                                                        <DialogHeader>
-                                                          <DialogTitle>Modifier Charge</DialogTitle>
-                                                        </DialogHeader>
-                                                        <div className="space-y-4 py-4">
-                                                            <div className="grid grid-cols-2 gap-4">
-                                                                <div className="space-y-2">
-                                                                  <Label>Montant</Label>
-                                                                  <Input 
-                                                                    type="number" 
-                                                                    value={fixedAmount} 
-                                                                    onChange={e => setFixedAmount(e.target.value)} 
-                                                                  />
-                                                                </div>
-                                                                <div className="space-y-2">
-                                                                  <Label>Nom</Label>
-                                                                  <Input 
-                                                                    value={fixedDescription} 
-                                                                    onChange={e => setFixedDescription(e.target.value)} 
-                                                                  />
-                                                                </div>
-                                                            </div>
-                                                            <div className="flex items-center gap-2">
-                                                              <input 
-                                                                type="checkbox" 
-                                                                id="exep" 
-                                                                checked={isExceptional} 
-                                                                onChange={e => setIsExceptional(e.target.checked)} 
-                                                                className="rounded border-slate-300"
-                                                              />
-                                                              <Label htmlFor="exep">Exceptionnel ce mois-ci</Label>
-                                                            </div>
-                                                            <Button onClick={saveEditFixedExpense} className="w-full">
-                                                              Enregistrer
-                                                            </Button>
-                                                        </div>
-                                                    </DialogContent>
-                                                </Dialog>
-                                                <Button 
-                                                  size="icon" 
-                                                  variant="ghost" 
-                                                  className="h-8 w-8 hover:text-red-500" 
-                                                  onClick={() => deleteFixedExpense(fx.id)}
-                                                >
-                                                  <Trash2 className="h-4 w-4"/>
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    </CardContent>
-                                </Card>
-                            ))}
-                            {fixedExpenses.length === 0 && (
-                              <div className="text-center p-10 border-2 border-dashed rounded-xl text-slate-400">
-                                Aucune charge fixe définie
-                              </div>
-                            )}
-                        </div>
-                        
-                        {/* Formulaire ajout rapide */}
-                        <Card className="h-fit shadow-sm border-slate-200 bg-slate-50/50">
-                            <CardHeader>
-                              <CardTitle className="text-sm uppercase tracking-wide text-slate-500">
-                                Nouvelle Charge
-                              </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <form onSubmit={addFixedExpense} className="space-y-4">
-                                    <div className="space-y-2">
-                                      <Label>Montant (€)</Label>
-                                      <Input 
-                                        type="number" 
-                                        step="0.01" 
-                                        value={fixedAmount} 
-                                        onChange={e => setFixedAmount(e.target.value)} 
-                                        className="bg-white"
-                                      />
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label>Description</Label>
-                                      <Input 
-                                        placeholder="Ex: Netflix" 
-                                        value={fixedDescription} 
-                                        onChange={e => setFixedDescription(e.target.value)} 
-                                        className="bg-white"
-                                      />
-                                    </div>
-                                    <Button type="submit" className="w-full bg-slate-900 text-white hover:bg-slate-800">
-                                      Ajouter
-                                    </Button>
-                                </form>
-                            </CardContent>
-                        </Card>
-                    </div>
-                </TabsContent>
-
-                {/* --- CONTENU ONGLET : PROJETS & ÉPARGNE --- */}
-                <TabsContent value="projects" className="space-y-6">
-                    {/* KPIs épargne */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                        <Card className="shadow-sm border-slate-200">
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium text-slate-500">Solde de départ</CardTitle>
-                                <div className="h-8 w-8 rounded-full bg-slate-100 flex items-center justify-center">
-                                  <PiggyBank className="h-4 w-4 text-slate-600" />
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="flex gap-2">
-                                    <div className="relative flex-1">
-                                        <Input
-                                          type="number"
-                                          value={initialSavingsInput}
-                                          onChange={e => setInitialSavingsInput(e.target.value)}
-                                          className="font-mono bg-slate-50 pr-6"
-                                        />
-                                        <span className="absolute right-2 top-2.5 text-xs text-slate-400">€</span>
-                                    </div>
-                                    <Button variant="outline" size="icon" onClick={saveInitialSavings}>
-                                      <Edit className="h-4 w-4"/>
-                                    </Button>
-                                </div>
-                                <p className="text-xs text-slate-500 mt-2">
-                                  Votre épargne réelle aujourd'hui{initialSavingsMonth ? ` (réf. ${initialSavingsMonth})` : ""}
-                                </p>
-                            </CardContent>
-                        </Card>
-
-                        <Card className="shadow-sm border-slate-200">
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium text-slate-500">Épargne actuelle</CardTitle>
-                                <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                                  <TrendingUp className="h-4 w-4 text-emerald-600" />
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className={`text-2xl font-bold ${currentSavings < 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                                  {currentSavings.toFixed(2)} €
-                                </div>
-                                <p className="text-xs text-slate-500 mt-1">
-                                  {hasStartingBalance
-                                    ? `Départ ${anchorMonth} + épargne depuis`
-                                    : "Cumul de l'épargne enregistrée"}
-                                </p>
-                            </CardContent>
-                        </Card>
-
-                        <Card className="shadow-sm border-slate-200">
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium text-slate-500">Projection finale</CardTitle>
-                                <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                                  <Target className="h-4 w-4 text-blue-600" />
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className={`text-2xl font-bold ${projectedFinalSavings < 0 ? 'text-red-600' : 'text-slate-900'}`}>
-                                  {projectedFinalSavings.toFixed(2)} €
-                                </div>
-                                <p className="text-xs text-slate-500 mt-1">Après projets inclus</p>
-                            </CardContent>
-                        </Card>
-
-                        <Card className="shadow-sm border-slate-200">
-                            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                                <CardTitle className="text-sm font-medium text-slate-500">Projets inclus</CardTitle>
-                                <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center">
-                                  <Rocket className="h-4 w-4 text-violet-600" />
-                                </div>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="text-2xl font-bold text-slate-900">{totalIncludedProjects.toFixed(2)} €</div>
-                                <p className="text-xs text-slate-500 mt-1">{includedProjects.length} projet(s) actif(s)</p>
-                            </CardContent>
-                        </Card>
-                    </div>
-
-                    {/* Projection cumulée */}
-                    <Card className="shadow-sm border-slate-200">
-                        <CardHeader>
-                            <CardTitle>Projection de l'épargne</CardTitle>
-                            <CardDescription>
-                              {hasStartingBalance
-                                ? `Solde de départ (${anchorMonth}) + épargne « Epargne » depuis ce mois. `
-                                : "Cumul de l'épargne « Epargne » mois par mois. "}
-                              Les projets « inclus » sont déduits à leur échéance ; les mois à venir sont extrapolés à partir de votre épargne moyenne ({avgNet.toFixed(0)} €/mois).
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="h-[320px]">
-                            {projectionData.length > 0 ? (
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <AreaChart data={projectionData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                                        <defs>
-                                            <linearGradient id="soldeGradient" x1="0" y1="0" x2="0" y2="1">
-                                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.4} />
-                                                <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                                            </linearGradient>
-                                        </defs>
-                                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                                        <XAxis dataKey="month" tick={{ fontSize: 11 }} stroke="#94a3b8" />
-                                        <YAxis tick={{ fontSize: 11 }} stroke="#94a3b8" width={55} />
-                                        <RechartsTooltip
-                                          formatter={(value: number) => [`${value.toFixed(2)} €`, "Solde"]}
-                                          contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                                        />
-                                        <ReferenceLine y={0} stroke="#ef4444" strokeDasharray="4 4" />
-                                        <Area type="monotone" dataKey="solde" stroke="#10b981" strokeWidth={2} fill="url(#soldeGradient)" />
-                                    </AreaChart>
-                                </ResponsiveContainer>
-                            ) : (
-                                <div className="h-full flex items-center justify-center text-slate-400 text-sm text-center">
-                                  Enregistrez au moins un mois ou ajoutez un projet pour voir la projection.
-                                </div>
-                            )}
-                        </CardContent>
-                        {hasNegativeProjection && (
-                            <CardFooter>
-                                <div className="flex items-start gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg p-3 w-full">
-                                    <TrendingDown className="h-4 w-4 mt-0.5 shrink-0" />
-                                    <p>Attention : votre solde d'épargne passe sous zéro sur la période. Décalez ou désactivez un projet pour rétablir l'équilibre.</p>
-                                </div>
-                            </CardFooter>
-                        )}
-                    </Card>
-
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        {/* Liste des projets */}
-                        <div className="md:col-span-2 space-y-4">
-                            {sortedProjects.map((p) => {
-                                const meta = projectTypeMeta[p.type]
-                                const feasible = projectFeasibility.get(p.id)
-                                const TypeIcon = p.type === "voyage" ? Plane : p.type === "achat" ? ShoppingBag : Rocket
-                                return (
-                                    <Card key={p.id} className={`shadow-sm border-slate-200 group ${!p.included ? 'opacity-60' : ''}`}>
-                                        <CardContent className="p-4 flex items-center justify-between gap-4">
-                                            <div className="flex items-center gap-4 min-w-0">
-                                                <div className="p-2 rounded-lg shrink-0" style={{ backgroundColor: meta.color + '20', color: meta.color }}>
-                                                  <TypeIcon className="h-5 w-5" />
-                                                </div>
-                                                <div className="min-w-0">
-                                                    <p className="font-semibold text-slate-900 truncate">{p.name}</p>
-                                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                                        <Badge variant="secondary" className="font-normal" style={{ backgroundColor: meta.color + '20', color: meta.color }}>
-                                                          {meta.label}
-                                                        </Badge>
-                                                        <span className="text-xs text-slate-500">Échéance {p.targetMonth}</span>
-                                                        {p.included && (
-                                                          feasible ? (
-                                                            <Badge variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50">Réalisable</Badge>
-                                                          ) : (
-                                                            <Badge variant="outline" className="text-red-600 border-red-200 bg-red-50">Épargne insuffisante</Badge>
-                                                          )
-                                                        )}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center gap-3 shrink-0">
-                                                <span className="font-bold text-lg">{p.amount.toFixed(2)} €</span>
-                                                <div className="flex flex-col items-center">
-                                                    <Switch checked={p.included} onCheckedChange={() => toggleProjectIncluded(p.id)} />
-                                                    <span className="text-[10px] text-slate-400 mt-0.5">Inclus</span>
-                                                </div>
-                                                <Button
-                                                  size="icon"
-                                                  variant="ghost"
-                                                  className="h-8 w-8 text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                  onClick={() => deleteProject(p.id)}
-                                                >
-                                                  <Trash2 className="h-4 w-4"/>
-                                                </Button>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                )
-                            })}
-                            {projects.length === 0 && (
-                              <div className="text-center p-10 border-2 border-dashed rounded-xl text-slate-400">
-                                Aucun projet planifié. Ajoutez un voyage, un achat ou un projet à droite.
-                              </div>
-                            )}
-                        </div>
-
-                        {/* Formulaire nouveau projet */}
-                        <Card className="h-fit shadow-sm border-slate-200 bg-slate-50/50">
-                            <CardHeader>
-                              <CardTitle className="text-sm uppercase tracking-wide text-slate-500">Nouveau projet</CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <form onSubmit={addProject} className="space-y-4">
-                                    <div className="space-y-2">
-                                      <Label>Nom</Label>
-                                      <Input placeholder="Ex: Voyage Japon" value={newProjectName} onChange={e => setNewProjectName(e.target.value)} className="bg-white" />
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label>Type</Label>
-                                      <Select value={newProjectType} onValueChange={(v) => setNewProjectType(v as ProjectType)}>
-                                          <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="achat">Achat</SelectItem>
-                                            <SelectItem value="voyage">Voyage</SelectItem>
-                                            <SelectItem value="projet">Projet</SelectItem>
-                                          </SelectContent>
-                                      </Select>
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label>Montant (€)</Label>
-                                      <Input type="number" step="0.01" placeholder="1500" value={newProjectAmount} onChange={e => setNewProjectAmount(e.target.value)} className="bg-white" />
-                                    </div>
-                                    <div className="space-y-2">
-                                      <Label>Mois cible (YYYY-MM)</Label>
-                                      <Input placeholder="2027-06" value={newProjectMonth} onChange={e => setNewProjectMonth(e.target.value)} className="bg-white" />
-                                    </div>
-                                    <Button type="submit" className="w-full bg-slate-900 text-white hover:bg-slate-800">Ajouter le projet</Button>
-                                </form>
-                            </CardContent>
-                        </Card>
-                    </div>
-                </TabsContent>
-
-                {/* --- CONTENU ONGLET 4 : AJOUTER DÉPENSE --- */}
-                <TabsContent value="add">
-                    <div className="max-w-xl mx-auto">
-                        <Card className="shadow-lg border-slate-200">
-                            <CardHeader className="text-center bg-slate-50 border-b pb-6">
-                                <div className="mx-auto bg-green-100 p-3 rounded-full w-fit mb-2">
-                                  <Plus className="h-6 w-6 text-green-700"/>
-                                </div>
-                                <CardTitle>Nouvelle Dépense</CardTitle>
-                                <CardDescription>Ajoutez une transaction rapidement</CardDescription>
-                            </CardHeader>
-                            <CardContent className="pt-6">
-                                {frequentSuggestions.length > 0 && (
-                                    <div className="mb-6 space-y-2">
-                                        <Label className="text-slate-500 text-xs uppercase tracking-wide">Suggestions rapides</Label>
-                                        <div className="flex flex-wrap gap-2">
-                                            {frequentSuggestions.map((sugg, i) => (
-                                                <button
-                                                  key={i}
-                                                  type="button"
-                                                  onClick={() => quickLogSuggestion(sugg)}
-                                                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-slate-100 text-sm transition-colors"
-                                                >
-                                                    <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categories.find(c => c.id === sugg.category)?.color }} />
-                                                    {sugg.description} · {sugg.amount.toFixed(2)}€
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                <form onSubmit={addExpense} className="space-y-6">
-                                    <div className="grid grid-cols-2 gap-6">
-                                        <div className="space-y-2">
-                                            <Label className="text-slate-600">Montant</Label>
-                                            <div className="relative">
-                                              <span className="absolute left-3 top-2.5 text-slate-400">€</span>
-                                              <Input 
-                                                type="number" 
-                                                step="0.01" 
-                                                className="pl-8 text-lg font-semibold" 
-                                                placeholder="0.00" 
-                                                value={amount} 
-                                                onChange={e => setAmount(e.target.value)} 
-                                                autoFocus 
-                                              />
-                                            </div>
-                                        </div>
-                                        <div className="space-y-2">
-                                            <div className="flex items-center justify-between">
-                                                <Label className="text-slate-600">Catégorie</Label>
-                                                <Dialog>
-                                                    <DialogTrigger asChild>
-                                                        <Button type="button" size="icon" variant="ghost" className="h-5 w-5 text-slate-400 hover:text-slate-900">
-                                                          <Plus className="h-3.5 w-3.5" />
-                                                        </Button>
-                                                    </DialogTrigger>
-                                                    <DialogContent>
-                                                        <DialogHeader>
-                                                          <DialogTitle>Gérer les catégories</DialogTitle>
-                                                          <DialogDescription>Ajoutez vos propres catégories pour les ajouts rapides.</DialogDescription>
-                                                        </DialogHeader>
-                                                        <form onSubmit={addCustomCategory} className="space-y-4 pt-2">
-                                                            <div className="space-y-2">
-                                                              <Label>Nom de la catégorie</Label>
-                                                              <Input
-                                                                placeholder="Ex: Abonnements"
-                                                                value={newCategoryName}
-                                                                onChange={e => setNewCategoryName(e.target.value)}
-                                                              />
-                                                            </div>
-                                                            <div className="space-y-2">
-                                                              <Label>Couleur</Label>
-                                                              <div className="flex gap-2 flex-wrap">
-                                                                  {COLORS.map(c => (
-                                                                    <button
-                                                                      key={c}
-                                                                      type="button"
-                                                                      onClick={() => setNewCategoryColor(c)}
-                                                                      className="h-7 w-7 rounded-full ring-offset-2 transition-all"
-                                                                      style={{
-                                                                        backgroundColor: c,
-                                                                        boxShadow: newCategoryColor === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : "none",
-                                                                      }}
-                                                                    />
-                                                                  ))}
-                                                              </div>
-                                                            </div>
-                                                            <Button type="submit" className="w-full bg-slate-900">Ajouter la catégorie</Button>
-                                                        </form>
-
-                                                        {customCategories.length > 0 && (
-                                                            <div className="pt-4 border-t space-y-2">
-                                                                <Label className="text-slate-500 text-xs uppercase tracking-wide">Vos catégories</Label>
-                                                                <div className="space-y-1 max-h-40 overflow-y-auto">
-                                                                    {customCategories.map(c => (
-                                                                        <div key={c.id} className="flex items-center justify-between py-1.5 px-2 rounded-md hover:bg-slate-50">
-                                                                            <div className="flex items-center gap-2">
-                                                                                <span className="h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
-                                                                                <span className="text-sm text-slate-700">{c.name}</span>
-                                                                            </div>
-                                                                            <Button
-                                                                              type="button"
-                                                                              size="icon"
-                                                                              variant="ghost"
-                                                                              className="h-7 w-7 text-slate-400 hover:text-red-500"
-                                                                              onClick={() => deleteCustomCategory(c.id)}
-                                                                            >
-                                                                              <Trash2 className="h-3.5 w-3.5" />
-                                                                            </Button>
-                                                                        </div>
-                                                                    ))}
-                                                                </div>
-                                                            </div>
-                                                        )}
-
-                                                        <div className="pt-4 border-t space-y-2">
-                                                            <Label className="text-slate-500 text-xs uppercase tracking-wide">Budgets mensuels (optionnel)</Label>
-                                                            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                                                                {categories.filter(c => c.id !== "epargne").map(c => (
-                                                                    <div key={c.id} className="flex items-center justify-between gap-2 py-1">
-                                                                        <div className="flex items-center gap-2 min-w-0">
-                                                                            <span className="h-3 w-3 rounded-full shrink-0" style={{ backgroundColor: c.color }} />
-                                                                            <span className="text-sm text-slate-700 truncate">{c.name}</span>
-                                                                        </div>
-                                                                        <div className="relative w-28 shrink-0">
-                                                                            <Input
-                                                                              type="number"
-                                                                              min="0"
-                                                                              placeholder="Aucun"
-                                                                              className="h-8 text-sm pr-6"
-                                                                              value={categoryBudgets[c.id] ?? ""}
-                                                                              onChange={e => setCategoryBudgets(prev => ({ ...prev, [c.id]: parseFloat(e.target.value) || 0 }))}
-                                                                            />
-                                                                            <span className="absolute right-2 top-1.5 text-xs text-slate-400">€</span>
-                                                                        </div>
-                                                                    </div>
-                                                                ))}
-                                                            </div>
-                                                            <Button
-                                                              type="button"
-                                                              variant="outline"
-                                                              className="w-full"
-                                                              onClick={() => saveCategoryBudgets(categoryBudgets)}
-                                                            >
-                                                              Enregistrer les budgets
-                                                            </Button>
-                                                        </div>
-                                                    </DialogContent>
-                                                </Dialog>
-                                            </div>
-                                            <Select value={category} onValueChange={setCategory}>
-                                                <SelectTrigger><SelectValue /></SelectTrigger>
-                                                <SelectContent>
-                                                  {categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                                                </SelectContent>
-                                            </Select>
-                                        </div>
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label className="text-slate-600">Description (optionnel)</Label>
-                                        <Input
-                                          placeholder="Ex: Courses Carrefour..."
-                                          value={description} 
-                                          onChange={e => setDescription(e.target.value)} 
-                                        />
-                                    </div>
-                                    <Button 
-                                      type="submit" 
-                                      size="lg" 
-                                      className="w-full bg-slate-900 hover:bg-slate-800 text-white"
-                                    >
-                                      Valider la dépense
-                                    </Button>
-                                </form>
-                            </CardContent>
-                        </Card>
-                    </div>
-                </TabsContent>
-            </Tabs>
-            </>
-        )}
-      </div>
-
-      {/* --- BOUTON FLOTTANT D'AJOUT RAPIDE --- */}
-      {month !== "" && (
-          <Dialog
-            open={isQuickAddOpen}
-            onOpenChange={(open) => {
-              setIsQuickAddOpen(open)
-              if (!open) {
-                setAmount("")
-                setDescription("")
-                setCategory("alimentation")
-              }
-            }}
+          <button
+            type="button"
+            onClick={() => setIsMonthPickerOpen(true)}
+            className="ml-auto flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm font-medium"
+            style={{ color: "var(--t-paper)" }}
           >
-              <DialogTrigger asChild>
-                <Button
-                  size="icon"
-                  className="fixed bottom-6 right-6 z-40 h-14 w-14 rounded-full bg-slate-900 text-white shadow-lg hover:bg-slate-800"
-                >
-                  <Plus className="h-6 w-6" />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Ajout rapide</DialogTitle>
-                    <DialogDescription>Loggez une dépense en quelques secondes, depuis n'importe quel onglet.</DialogDescription>
-                  </DialogHeader>
+            {month ? monthLabel(month) : "Choisir un mois"}
+            <ChevronDown className="size-4" style={{ color: "var(--t-sage)" }} />
+          </button>
 
-                  {frequentSuggestions.length > 0 && (
-                      <div className="space-y-2">
-                          <Label className="text-slate-500 text-xs uppercase tracking-wide">Suggestions rapides</Label>
-                          <div className="flex flex-wrap gap-2">
-                              {frequentSuggestions.map((sugg, i) => (
-                                  <button
-                                    key={i}
-                                    type="button"
-                                    onClick={async () => { await quickLogSuggestion(sugg); setIsQuickAddOpen(false) }}
-                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-slate-200 bg-slate-50 hover:bg-slate-100 text-sm transition-colors"
-                                  >
-                                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: categories.find(c => c.id === sugg.category)?.color }} />
-                                      {sugg.description} · {sugg.amount.toFixed(2)}€
-                                  </button>
-                              ))}
-                          </div>
-                      </div>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="flex size-9 items-center justify-center rounded-full text-sm font-semibold"
+            style={{ backgroundColor: "var(--t-moss)", color: "var(--t-mist)" }}
+            title={`${currentUser} — se déconnecter`}
+          >
+            <span aria-hidden>{initials(currentUser)}</span>
+            <span className="sr-only">Se déconnecter de {currentUser}</span>
+          </button>
+        </div>
+      </header>
+
+      <main className="pb-dock mx-auto max-w-2xl">
+        {/* ===================== MOIS ===================== */}
+        {screen === "mois" &&
+          (!month ? (
+            <div className="px-4 pt-10">
+              <Panel>
+                <Empty title="Aucun mois ouvert">
+                  Crée un mois pour commencer à suivre ce qu'il te reste.
+                </Empty>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setNewMonthInput(getSuggestedNextMonth())
+                    setIsNewMonthDialogOpen(true)
+                  }}
+                  className="mx-auto mt-2 flex items-center gap-2 rounded-xl px-5 py-3 font-semibold"
+                  style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                >
+                  <Plus className="size-5" /> Créer un mois
+                </button>
+              </Panel>
+            </div>
+          ) : (
+            <>
+              <Reservoir balance={totals.balance} income={totals.totalIncome} daysLeft={daysLeft} />
+
+              <div className="space-y-4 px-4 pt-4">
+                {/* Ce qui mérite une réaction, en haut. */}
+                {(overBudget.length > 0 || pacing) && (
+                  <Panel className="space-y-2.5">
+                    {overBudget.map((c) => (
+                      <p key={c.id} className="flex items-start gap-2 text-sm" style={{ color: "var(--t-paper)" }}>
+                        <Dot color={c.color} className="mt-1.5" />
+                        <span>
+                          {c.name} dépasse son budget de{" "}
+                          <span className="tnum font-semibold" style={{ color: "var(--t-clay)" }}>
+                            {euros(c.spent - c.budget)}
+                          </span>
+                        </span>
+                      </p>
+                    ))}
+                    {pacing &&
+                      (pacing.isOver ? (
+                        <p className="text-sm" style={{ color: "var(--t-paper)" }}>
+                          Tu es à découvert de{" "}
+                          <span className="tnum font-semibold" style={{ color: "var(--t-clay)" }}>
+                            {euros(pacing.value)}
+                          </span>{" "}
+                          pour ce mois.
+                        </p>
+                      ) : (
+                        <p className="text-sm" style={{ color: "var(--t-paper)" }}>
+                          Tu peux dépenser{" "}
+                          <span className="tnum font-semibold" style={{ color: "var(--t-brass)" }}>
+                            {euros(pacing.value)}
+                          </span>{" "}
+                          par {pacing.unit} sur les {pacing.days} jours restants.
+                        </p>
+                      ))}
+                  </Panel>
+                )}
+
+                <Panel>
+                  <SectionTitle aside={euros(totals.totalExpenses)}>Où ça part</SectionTitle>
+                  <CategoryBars
+                    rows={spendRows}
+                    onSelect={(id) => {
+                      setFilterCategory(id)
+                      setScopeAllMonths(false)
+                      setScreen("historique")
+                    }}
+                  />
+                </Panel>
+
+                <Panel flush>
+                  <div className="px-4 pb-1 pt-3">
+                    <SectionTitle aside={`${euros(totals.totalFixed)} par mois`}>Charges fixes</SectionTitle>
+                  </div>
+                  {fixedExpenses.length === 0 ? (
+                    <Empty title="Aucune charge fixe">Loyer, abonnements, assurances…</Empty>
+                  ) : (
+                    fixedExpenses.map((fx) => (
+                      <Row key={fx.id}>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm" style={{ color: "var(--t-paper)" }}>
+                            {fx.description}
+                          </span>
+                          {fx.isExceptional && (
+                            <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                              Exceptionnelle, non reprise le mois prochain
+                            </span>
+                          )}
+                        </span>
+                        <Amount>{euros(fx.amount)}</Amount>
+                        <IconButton label={`Modifier ${fx.description}`} onClick={() => openFixedForm(fx)}>
+                          <Pencil className="size-4" />
+                        </IconButton>
+                        <IconButton label={`Supprimer ${fx.description}`} onClick={() => deleteFixedExpense(fx.id)} danger>
+                          <Trash2 className="size-4" />
+                        </IconButton>
+                      </Row>
+                    ))
+                  )}
+                  <div className="px-4 py-3">
+                    <button
+                      type="button"
+                      onClick={() => openFixedForm()}
+                      className="flex items-center gap-2 text-sm font-medium"
+                      style={{ color: "var(--t-brass)" }}
+                    >
+                      <Plus className="size-4" /> Ajouter une charge
+                    </button>
+                  </div>
+                </Panel>
+
+                <Panel>
+                  <SectionTitle aside={euros(totals.totalIncome)}>Revenus</SectionTitle>
+                  <InlineAmountField
+                    label="Salaire"
+                    value={salary}
+                    onSave={saveSalary}
+                    placeholder="2000"
+                  />
+
+                  {extraIncomes.length > 0 && (
+                    <ul className="mt-3 space-y-2">
+                      {extraIncomes.map((inc) => (
+                        <li key={inc.id} className="flex items-center gap-3 text-sm">
+                          <span className="min-w-0 flex-1 truncate" style={{ color: "var(--t-paper)" }}>
+                            {inc.description}
+                          </span>
+                          <Amount tone="accent">+{euros(inc.amount)}</Amount>
+                          <IconButton label={`Supprimer ${inc.description}`} onClick={() => deleteExtraIncome(inc.id)} danger>
+                            <Trash2 className="size-4" />
+                          </IconButton>
+                        </li>
+                      ))}
+                    </ul>
                   )}
 
-                  <form onSubmit={addExpense} className="space-y-4 pt-2">
-                      <div className="grid grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                              <Label className="text-slate-600">Montant</Label>
-                              <div className="relative">
-                                <span className="absolute left-3 top-2.5 text-slate-400">€</span>
-                                <Input
-                                  type="number"
-                                  step="0.01"
-                                  className="pl-8"
-                                  placeholder="0.00"
-                                  value={amount}
-                                  onChange={e => setAmount(e.target.value)}
-                                  autoFocus
-                                />
-                              </div>
-                          </div>
-                          <div className="space-y-2">
-                              <Label className="text-slate-600">Catégorie</Label>
-                              <Select value={category} onValueChange={setCategory}>
-                                  <SelectTrigger><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    {categories.map(c => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                                  </SelectContent>
-                              </Select>
-                          </div>
-                      </div>
-                      <div className="space-y-2">
-                          <Label className="text-slate-600">Description (optionnel)</Label>
-                          <Input
-                            placeholder="Ex: Courses Carrefour..."
-                            value={description}
-                            onChange={e => setDescription(e.target.value)}
-                          />
-                      </div>
-                      <Button type="submit" className="w-full bg-slate-900 hover:bg-slate-800 text-white">
-                        Valider la dépense
-                      </Button>
+                  <form onSubmit={addExtraIncome} className="mt-3 flex gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={incomeAmount}
+                      onChange={(e) => setIncomeAmount(e.target.value)}
+                      placeholder="Montant"
+                      className={`${FIELD} !w-28 shrink-0`}
+                      style={FIELD_STYLE}
+                      aria-label="Montant du revenu supplémentaire"
+                    />
+                    <input
+                      value={incomeDescription}
+                      onChange={(e) => setIncomeDescription(e.target.value)}
+                      placeholder="Prime, remboursement…"
+                      className={FIELD}
+                      style={FIELD_STYLE}
+                      aria-label="Nature du revenu supplémentaire"
+                    />
+                    <button
+                      type="submit"
+                      className="shrink-0 rounded-xl px-3.5"
+                      style={{ backgroundColor: "var(--t-moss)", color: "var(--t-brass)" }}
+                      aria-label="Ajouter le revenu"
+                    >
+                      <Plus className="size-5" />
+                    </button>
                   </form>
-              </DialogContent>
-          </Dialog>
+                </Panel>
+
+                <Panel>
+                  <SectionTitle aside={savingsGoalNum > 0 ? `${Math.round(savingsProgress)} %` : undefined}>
+                    Objectif d'épargne
+                  </SectionTitle>
+                  <InlineAmountField
+                    label="Objectif du mois"
+                    value={savingsGoalInput}
+                    onSave={saveSavingsGoal}
+                    placeholder="400"
+                  />
+                  {savingsGoalNum > 0 && (
+                    <>
+                      <div className="mt-3 h-2.5 w-full rounded-[3px]" style={{ backgroundColor: "var(--t-moss)" }}>
+                        <div
+                          className="h-full rounded-r-[4px]"
+                          style={{
+                            width: `${savingsProgress}%`,
+                            backgroundColor: catById("epargne")?.color ?? "var(--t-brass)",
+                          }}
+                        />
+                      </div>
+                      <p className="tnum mt-1.5 text-xs" style={{ color: "var(--t-sage)" }}>
+                        {euros(savedThisMonth)} mis de côté sur {euros(savingsGoalNum)}
+                      </p>
+                    </>
+                  )}
+                </Panel>
+
+                <Panel flush>
+                  <div className="px-4 pb-1 pt-3">
+                    <SectionTitle
+                      aside={
+                        expenses.length > 0 ? (
+                          <button type="button" onClick={() => setScreen("historique")} style={{ color: "var(--t-brass)" }}>
+                            Tout voir
+                          </button>
+                        ) : undefined
+                      }
+                    >
+                      Dernières dépenses
+                    </SectionTitle>
+                  </div>
+                  {expenses.length === 0 ? (
+                    <Empty title="Rien de noté">Appuie sur + pour noter ta première dépense du mois.</Empty>
+                  ) : (
+                    expenses.slice(0, 6).map((e) => (
+                      <ExpenseRow
+                        key={e.id}
+                        expense={e}
+                        category={catById(e.category)}
+                        onDelete={() => deleteExpense(e.id)}
+                      />
+                    ))
+                  )}
+                </Panel>
+              </div>
+            </>
+          ))}
+
+        {/* ===================== HISTORIQUE ===================== */}
+        {screen === "historique" && (
+          <div className="space-y-4 px-4 pt-4">
+            <Panel>
+              <SectionTitle>Rechercher</SectionTitle>
+              <div className="relative">
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Auchan, essence, 45…"
+                  className={FIELD}
+                  style={FIELD_STYLE}
+                  aria-label="Rechercher une dépense"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded-full p-2"
+                    style={{ color: "var(--t-sage)" }}
+                    aria-label="Effacer la recherche"
+                  >
+                    <X className="size-4" />
+                  </button>
+                )}
+              </div>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Chip active={!scopeAllMonths} onClick={() => setScopeAllMonths(false)}>
+                  {month ? monthLabel(month) : "Mois affiché"}
+                </Chip>
+                <Chip active={scopeAllMonths} onClick={() => setScopeAllMonths(true)}>
+                  Tous les mois
+                </Chip>
+              </div>
+
+              {/* Une seule rangée qui défile : la liste des catégories sur quatre
+                  lignes repoussait les résultats hors de l'écran. */}
+              <div className="-mx-4 mt-2 flex gap-2 overflow-x-auto px-4 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <Chip active={filterCategory === null} onClick={() => setFilterCategory(null)}>
+                  Toutes
+                </Chip>
+                {categories.map((c) => (
+                  <Chip
+                    key={c.id}
+                    active={filterCategory === c.id}
+                    onClick={() => setFilterCategory(filterCategory === c.id ? null : c.id)}
+                  >
+                    <Dot color={c.color} className="mr-1.5" />
+                    {c.name}
+                  </Chip>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel flush>
+              <div className="flex items-baseline justify-between gap-3 px-4 pb-1 pt-3">
+                <h2 className="text-[0.95rem] font-semibold" style={{ color: "var(--t-paper)" }}>
+                  {filteredExpenses.length} dépense{filteredExpenses.length > 1 ? "s" : ""}
+                </h2>
+                <Amount>{euros(filteredTotal)}</Amount>
+              </div>
+              {filteredExpenses.length === 0 ? (
+                <Empty title="Aucun résultat">Essaie un autre mot, ou élargis à tous les mois.</Empty>
+              ) : (
+                filteredExpenses
+                  .slice(0, 100)
+                  .map((e) => (
+                    <ExpenseRow
+                      key={`${e.month}-${e.id}`}
+                      expense={e}
+                      category={catById(e.category)}
+                      showMonth={scopeAllMonths ? e.month : undefined}
+                      onDelete={!scopeAllMonths || e.month === month ? () => deleteExpense(e.id) : undefined}
+                    />
+                  ))
+              )}
+              {filteredExpenses.length > 100 && (
+                <p className="px-4 py-3 text-xs" style={{ color: "var(--t-sage)" }}>
+                  Les 100 plus récentes sont affichées. Affine la recherche pour voir les autres.
+                </p>
+              )}
+            </Panel>
+
+            <Panel>
+              <SectionTitle aside={`${history.length} mois`}>Évolution</SectionTitle>
+              <EvolutionChart history={history} />
+            </Panel>
+
+            <Panel>
+              <SectionTitle
+                aside={comparison.previousMonth ? `contre ${monthLabel(comparison.previousMonth)}` : undefined}
+              >
+                Comparaison
+              </SectionTitle>
+              {comparison.previousMonth ? (
+                <ComparisonList rows={comparison.rows} />
+              ) : (
+                <Empty title="Pas de mois précédent">
+                  La comparaison apparaîtra dès qu'un mois antérieur sera enregistré.
+                </Empty>
+              )}
+            </Panel>
+
+            <Panel>
+              <SectionTitle>Export</SectionTitle>
+              <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
+                Toutes tes dépenses, tous les mois, dans un tableur.
+              </p>
+              <button
+                type="button"
+                onClick={exportCsv}
+                className="flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold"
+                style={{ backgroundColor: "var(--t-moss)", color: "var(--t-paper)" }}
+              >
+                <Download className="size-4" /> Télécharger le CSV
+              </button>
+            </Panel>
+          </div>
+        )}
+
+        {/* ===================== ÉPARGNE ===================== */}
+        {screen === "epargne" && (
+          <div className="space-y-4 px-4 pt-4">
+            <Panel>
+              <SectionTitle>Épargne</SectionTitle>
+              <p className="figure-hero text-[clamp(2.5rem,12vw,3.75rem)]" style={{ color: "var(--t-brass)" }}>
+                {euros(projection.currentSavings)}
+              </p>
+              <p className="mt-2 text-sm" style={{ color: "var(--t-sage)" }}>
+                Aujourd'hui. Projetée à {eurosRound(projection.projectedFinalSavings)} une fois les projets inclus
+                déduits.
+              </p>
+              {projection.hasNegative && (
+                <p className="mt-3 text-sm" style={{ color: "var(--t-clay)" }}>
+                  En l'état, le solde passe sous zéro avant la fin de la projection. Décale un projet ou augmente
+                  l'épargne mensuelle.
+                </p>
+              )}
+            </Panel>
+
+            <Panel>
+              <SectionTitle>Projection</SectionTitle>
+              <ProjectionChart points={projection.points} currentMonth={currentMonthStr} />
+            </Panel>
+
+            <Panel>
+              <SectionTitle>Solde de départ</SectionTitle>
+              <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
+                Ce que tu as déjà de côté. Daté du mois consulté{month ? ` (${monthLabel(month)})` : ""} : l'épargne est
+                cumulée à partir de là.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={initialSavingsInput}
+                  onChange={(e) => setInitialSavingsInput(e.target.value)}
+                  className={FIELD}
+                  style={FIELD_STYLE}
+                  aria-label="Solde d'épargne de départ"
+                />
+                <button
+                  type="button"
+                  onClick={saveInitialSavings}
+                  className="shrink-0 rounded-xl px-4 font-semibold"
+                  style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                >
+                  Enregistrer
+                </button>
+              </div>
+              {initialSavingsMonth && (
+                <p className="mt-2 text-xs" style={{ color: "var(--t-sage)" }}>
+                  Référence actuelle : {monthLabel(initialSavingsMonth)}
+                </p>
+              )}
+            </Panel>
+
+            <Panel flush>
+              <div className="px-4 pb-1 pt-3">
+                <SectionTitle aside={`${eurosRound(includedTotal)} inclus`}>Projets</SectionTitle>
+              </div>
+              {sortedProjects.length === 0 ? (
+                <Empty title="Aucun projet">Un voyage, un achat : note-le et vois s'il tient dans ton épargne.</Empty>
+              ) : (
+                sortedProjects.map((p) => {
+                  const feasible = projection.feasibility.get(p.id)
+                  return (
+                    <Row key={p.id}>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm" style={{ color: "var(--t-paper)" }}>
+                          {p.name}
+                        </span>
+                        <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                          {PROJECT_TYPES[p.type].label} · {monthLabel(p.targetMonth)}
+                          {p.included && feasible !== undefined && (
+                            <span style={{ color: feasible ? "var(--t-sage)" : "var(--t-clay)" }}>
+                              {feasible ? " · finançable" : " · hors budget"}
+                            </span>
+                          )}
+                        </span>
+                      </span>
+                      <Amount tone={p.included ? "default" : "muted"}>{eurosRound(p.amount)}</Amount>
+                      <Switch
+                        checked={p.included}
+                        onCheckedChange={() => toggleProjectIncluded(p.id)}
+                        aria-label={`Inclure ${p.name} dans la projection`}
+                      />
+                      <IconButton label={`Supprimer ${p.name}`} onClick={() => deleteProject(p.id)} danger>
+                        <Trash2 className="size-4" />
+                      </IconButton>
+                    </Row>
+                  )
+                })
+              )}
+
+              <form onSubmit={addProject} className="space-y-2 px-4 py-4">
+                <input
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                  placeholder="Voyage Japon"
+                  className={FIELD}
+                  style={FIELD_STYLE}
+                  aria-label="Nom du projet"
+                />
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={newProjectAmount}
+                    onChange={(e) => setNewProjectAmount(e.target.value)}
+                    placeholder="2800"
+                    className={FIELD}
+                    style={FIELD_STYLE}
+                    aria-label="Montant du projet"
+                  />
+                  <input
+                    value={newProjectMonth}
+                    onChange={(e) => setNewProjectMonth(e.target.value)}
+                    placeholder="2027-06"
+                    className={FIELD}
+                    style={FIELD_STYLE}
+                    aria-label="Mois cible, au format AAAA-MM"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {(Object.keys(PROJECT_TYPES) as ProjectType[]).map((t) => (
+                    <Chip key={t} active={newProjectType === t} onClick={() => setNewProjectType(t)}>
+                      {PROJECT_TYPES[t].label}
+                    </Chip>
+                  ))}
+                  <button
+                    type="submit"
+                    className="ml-auto rounded-xl px-4 py-2 text-sm font-semibold"
+                    style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+              </form>
+            </Panel>
+          </div>
+        )}
+
+        {/* ===================== RÉGLAGES ===================== */}
+        {screen === "reglages" && (
+          <div className="space-y-4 px-4 pt-4">
+            <Panel>
+              <SectionTitle>Budgets par catégorie</SectionTitle>
+              <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
+                Laisse vide pour ne pas suivre de budget sur une catégorie.
+              </p>
+              <BudgetEditor
+                categories={categories.filter((c) => c.id !== "epargne")}
+                budgets={categoryBudgets}
+                onSave={async (next) => {
+                  if (await saveCategoryBudgets(next)) setCategoryBudgets(next)
+                }}
+              />
+            </Panel>
+
+            <Panel flush>
+              <div className="px-4 pb-1 pt-3">
+                <SectionTitle>Catégories</SectionTitle>
+              </div>
+              {categories.map((c) => {
+                const isCustom = customCategories.some((cc) => cc.id === c.id)
+                return (
+                  <Row key={c.id}>
+                    <Dot color={c.color} />
+                    <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--t-paper)" }}>
+                      {c.name}
+                    </span>
+                    {isCustom ? (
+                      <IconButton label={`Supprimer ${c.name}`} onClick={() => deleteCustomCategory(c.id)} danger>
+                        <Trash2 className="size-4" />
+                      </IconButton>
+                    ) : (
+                      <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+                        par défaut
+                      </span>
+                    )}
+                  </Row>
+                )
+              })}
+
+              <form onSubmit={addCustomCategory} className="space-y-2.5 px-4 py-4">
+                <input
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  placeholder="Animaux, travaux…"
+                  className={FIELD}
+                  style={FIELD_STYLE}
+                  aria-label="Nom de la nouvelle catégorie"
+                />
+                <div className="flex items-center gap-2">
+                  {CUSTOM_CATEGORY_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setNewCategoryColor(c)}
+                      className="flex size-8 items-center justify-center rounded-full"
+                      style={{ backgroundColor: c }}
+                      aria-label={`Couleur ${c}`}
+                      aria-pressed={newCategoryColor === c}
+                    >
+                      {newCategoryColor === c && <Check className="size-4" style={{ color: "var(--t-ink)" }} />}
+                    </button>
+                  ))}
+                  <button
+                    type="submit"
+                    className="ml-auto rounded-xl px-4 py-2 text-sm font-semibold"
+                    style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+              </form>
+            </Panel>
+
+            <Panel flush>
+              <div className="px-4 pb-1 pt-3">
+                <SectionTitle>Mois</SectionTitle>
+              </div>
+              <Row
+                onClick={() => {
+                  setNewMonthInput(getSuggestedNextMonth())
+                  setIsNewMonthDialogOpen(true)
+                }}
+              >
+                <Plus className="size-4" style={{ color: "var(--t-brass)" }} />
+                <span className="flex-1 text-sm" style={{ color: "var(--t-paper)" }}>
+                  Créer un mois
+                </span>
+              </Row>
+              {month && (
+                <>
+                  <Row
+                    onClick={() => {
+                      setEditMonthInput(month)
+                      setIsEditMonthOpen(true)
+                    }}
+                  >
+                    <Pencil className="size-4" style={{ color: "var(--t-sage)" }} />
+                    <span className="flex-1 text-sm" style={{ color: "var(--t-paper)" }}>
+                      Corriger la date {ofMonth(month)}
+                    </span>
+                  </Row>
+                  <Row onClick={deleteMonth}>
+                    <Trash2 className="size-4" style={{ color: "var(--t-clay)" }} />
+                    <span className="flex-1 text-sm" style={{ color: "var(--t-clay)" }}>
+                      Supprimer {monthLabel(month)}
+                    </span>
+                  </Row>
+                </>
+              )}
+            </Panel>
+
+            <Panel flush>
+              <div className="px-4 pb-1 pt-3">
+                <SectionTitle>Compte</SectionTitle>
+              </div>
+              <Row>
+                <span className="flex-1 text-sm" style={{ color: "var(--t-paper)" }}>
+                  Connecté en tant que {currentUser}
+                </span>
+              </Row>
+              <Row onClick={handleLogout}>
+                <LogOut className="size-4" style={{ color: "var(--t-sage)" }} />
+                <span className="flex-1 text-sm" style={{ color: "var(--t-paper)" }}>
+                  Se déconnecter
+                </span>
+              </Row>
+            </Panel>
+          </div>
+        )}
+      </main>
+
+      <Dock screen={screen} onScreen={setScreen} onAdd={() => setIsQuickAddOpen(true)} canAdd={!!month} />
+
+      {/* ===================== Noter une dépense ===================== */}
+      <Sheet open={isQuickAddOpen} onOpenChange={setIsQuickAddOpen} title="Noter une dépense">
+        {suggestions.length > 0 && (
+          <div className="mb-4">
+            <p className={LABEL} style={LABEL_STYLE}>
+              Tes habitudes
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((s) => (
+                <button
+                  key={`${s.category}-${s.description}`}
+                  type="button"
+                  onClick={() => logExpense(s.amount, s.description, s.category)}
+                  className="flex items-center gap-2 rounded-xl px-3 py-2 text-sm"
+                  style={{ backgroundColor: "var(--t-moss)", color: "var(--t-paper)" }}
+                >
+                  <Dot color={catById(s.category)?.color ?? "var(--t-sage)"} />
+                  {s.description}
+                  <span className="tnum font-semibold" style={{ color: "var(--t-brass)" }}>
+                    {euros(s.amount)}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <form onSubmit={addExpense} className="space-y-3">
+          <div>
+            <label htmlFor="qa-montant" className={LABEL} style={LABEL_STYLE}>
+              Montant
+            </label>
+            <input
+              id="qa-montant"
+              type="number"
+              step="0.01"
+              inputMode="decimal"
+              autoFocus
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0,00"
+              className={`${FIELD} figure-hero !text-4xl`}
+              style={FIELD_STYLE}
+            />
+          </div>
+
+          <div>
+            <p className={LABEL} style={LABEL_STYLE}>
+              Catégorie
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {categories.map((c) => (
+                <Chip key={c.id} active={category === c.id} onClick={() => setCategory(c.id)}>
+                  <Dot color={c.color} className="mr-1.5" />
+                  {c.name}
+                </Chip>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="qa-desc" className={LABEL} style={LABEL_STYLE}>
+              Description (facultative)
+            </label>
+            <input
+              id="qa-desc"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Courses Auchan"
+              className={FIELD}
+              style={FIELD_STYLE}
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={!amount || isLoading}
+            className="w-full rounded-xl py-3.5 text-base font-semibold disabled:opacity-50"
+            style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+          >
+            Noter la dépense
+          </button>
+        </form>
+      </Sheet>
+
+      {/* ===================== Choisir un mois ===================== */}
+      <Sheet open={isMonthPickerOpen} onOpenChange={setIsMonthPickerOpen} title="Choisir un mois">
+        {allMonths.length === 0 ? (
+          <Empty title="Aucun mois enregistré">Crée ton premier mois pour démarrer.</Empty>
+        ) : (
+          <ul className="-mx-1">
+            {[...allMonths].reverse().map((m) => (
+              <li key={m}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    fetchMonthData(m)
+                    setIsMonthPickerOpen(false)
+                    setScreen("mois")
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left"
+                  style={{ color: m === month ? "var(--t-brass)" : "var(--t-paper)" }}
+                >
+                  <span className="flex-1">{monthLabel(m)}</span>
+                  {m === month && <Check className="size-4" />}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button
+          type="button"
+          onClick={() => {
+            setIsMonthPickerOpen(false)
+            setNewMonthInput(getSuggestedNextMonth())
+            setIsNewMonthDialogOpen(true)
+          }}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl py-3 font-semibold"
+          style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+        >
+          <Plus className="size-5" /> Créer un mois
+        </button>
+      </Sheet>
+
+      {/* ===================== Créer un mois ===================== */}
+      <Sheet open={isNewMonthDialogOpen} onOpenChange={setIsNewMonthDialogOpen} title="Créer un mois">
+        <form onSubmit={createNewMonth} className="space-y-3">
+          <div>
+            <label htmlFor="nm-mois" className={LABEL} style={LABEL_STYLE}>
+              Mois (AAAA-MM)
+            </label>
+            <input
+              id="nm-mois"
+              value={newMonthInput}
+              onChange={(e) => setNewMonthInput(e.target.value)}
+              placeholder="2026-11"
+              className={FIELD}
+              style={FIELD_STYLE}
+            />
+          </div>
+          <div>
+            <label htmlFor="nm-salaire" className={LABEL} style={LABEL_STYLE}>
+              Salaire
+            </label>
+            <input
+              id="nm-salaire"
+              type="number"
+              step="0.01"
+              inputMode="decimal"
+              value={newMonthSalary}
+              onChange={(e) => setNewMonthSalary(e.target.value)}
+              placeholder="2000"
+              className={FIELD}
+              style={FIELD_STYLE}
+            />
+          </div>
+          <p className="text-sm" style={{ color: "var(--t-sage)" }}>
+            Tes charges fixes récurrentes seront reprises automatiquement.
+          </p>
+          <button
+            type="submit"
+            className="w-full rounded-xl py-3.5 font-semibold"
+            style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+          >
+            Créer
+          </button>
+        </form>
+      </Sheet>
+
+      {/* ===================== Corriger la date ===================== */}
+      <Sheet open={isEditMonthOpen} onOpenChange={setIsEditMonthOpen} title="Corriger la date du mois">
+        <form onSubmit={renameMonth} className="space-y-3">
+          <input
+            value={editMonthInput}
+            onChange={(e) => setEditMonthInput(e.target.value)}
+            placeholder="2026-09"
+            className={FIELD}
+            style={FIELD_STYLE}
+            aria-label="Nouvelle date, au format AAAA-MM"
+          />
+          <p className="text-sm" style={{ color: "var(--t-sage)" }}>
+            Les dépenses et charges du mois suivent la nouvelle date.
+          </p>
+          <button
+            type="submit"
+            className="w-full rounded-xl py-3.5 font-semibold"
+            style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+          >
+            Corriger
+          </button>
+        </form>
+      </Sheet>
+
+      {/* ===================== Charge fixe ===================== */}
+      <Sheet
+        open={isFixedFormOpen}
+        onOpenChange={setIsFixedFormOpen}
+        title={editingFixedExpense ? "Modifier la charge" : "Ajouter une charge"}
+      >
+        <form onSubmit={submitFixedExpense} className="space-y-3">
+          <div>
+            <label htmlFor="fx-desc" className={LABEL} style={LABEL_STYLE}>
+              Intitulé
+            </label>
+            <input
+              id="fx-desc"
+              value={fixedDescription}
+              onChange={(e) => setFixedDescription(e.target.value)}
+              placeholder="Loyer"
+              className={FIELD}
+              style={FIELD_STYLE}
+            />
+          </div>
+          <div>
+            <label htmlFor="fx-montant" className={LABEL} style={LABEL_STYLE}>
+              Montant
+            </label>
+            <input
+              id="fx-montant"
+              type="number"
+              step="0.01"
+              inputMode="decimal"
+              value={fixedAmount}
+              onChange={(e) => setFixedAmount(e.target.value)}
+              placeholder="780"
+              className={FIELD}
+              style={FIELD_STYLE}
+            />
+          </div>
+          <label className="flex items-center gap-3 py-1">
+            <Switch checked={isExceptional} onCheckedChange={setIsExceptional} />
+            <span className="text-sm" style={{ color: "var(--t-paper)" }}>
+              Exceptionnelle — ne pas la reprendre le mois prochain
+            </span>
+          </label>
+          <button
+            type="submit"
+            className="w-full rounded-xl py-3.5 font-semibold"
+            style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+          >
+            {editingFixedExpense ? "Enregistrer" : "Ajouter"}
+          </button>
+        </form>
+      </Sheet>
+    </div>
+  )
+}
+
+// =============================================================
+// Petits composants locaux
+// =============================================================
+
+/** Une feuille ancrée en bas : à portée de pouce, contrairement à une fenêtre centrée. */
+function Sheet({
+  open,
+  onOpenChange,
+  title,
+  children,
+}: {
+  open: boolean
+  onOpenChange: (v: boolean) => void
+  title: string
+  children: React.ReactNode
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="top-auto bottom-0 left-0 right-0 max-h-[88svh] w-full max-w-2xl translate-x-0 translate-y-0 overflow-y-auto rounded-b-none rounded-t-3xl border-x-0 border-b-0 p-5 sm:left-1/2 sm:-translate-x-1/2"
+        style={{ backgroundColor: "var(--t-pine)", borderColor: "var(--t-line)" }}
+      >
+        <DialogHeader className="mb-3 text-left">
+          <DialogTitle className="text-lg font-semibold" style={{ color: "var(--t-paper)" }}>
+            {title}
+          </DialogTitle>
+        </DialogHeader>
+        {children}
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function IconButton({
+  label,
+  onClick,
+  danger,
+  children,
+}: {
+  label: string
+  onClick: () => void
+  danger?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      // Au repos les icônes restent grises : une liste de dix corbeilles rouges
+      // crie plus fort que les montants. Le rouge n'apparaît qu'à l'intention.
+      className={cn(
+        "shrink-0 rounded-lg p-2 text-[var(--t-sage)] transition-colors hover:bg-white/[0.06]",
+        danger && "hover:text-[var(--t-clay)] focus-visible:text-[var(--t-clay)]"
+      )}
+    >
+      {children}
+      <span className="sr-only">{label}</span>
+    </button>
+  )
+}
+
+function Chip({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className="flex shrink-0 items-center whitespace-nowrap rounded-xl border px-3 py-2 text-sm transition-colors"
+      style={{
+        backgroundColor: active ? "var(--t-brass)" : "var(--t-moss)",
+        borderColor: active ? "var(--t-brass)" : "var(--t-line)",
+        color: active ? "var(--t-ink)" : "var(--t-paper)",
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ExpenseRow({
+  expense,
+  category,
+  showMonth,
+  onDelete,
+}: {
+  expense: Expense
+  category?: Category
+  showMonth?: string
+  onDelete?: () => void
+}) {
+  return (
+    <Row>
+      <Dot color={category?.color ?? "var(--t-sage)"} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-sm" style={{ color: "var(--t-paper)" }}>
+          {expense.description}
+        </span>
+        <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+          {dayLabel(expense.date)}
+          {showMonth ? ` · ${monthLabel(showMonth)}` : ""}
+          {category ? ` · ${category.name}` : ""}
+        </span>
+      </span>
+      <Amount>{euros(expense.amount)}</Amount>
+      {onDelete && (
+        <IconButton label={`Supprimer ${expense.description}`} onClick={onDelete} danger>
+          <Trash2 className="size-4" />
+        </IconButton>
+      )}
+    </Row>
+  )
+}
+
+/** Montant modifiable sur place : on n'enregistre que si la valeur a bougé. */
+function InlineAmountField({
+  label,
+  value,
+  onSave,
+  placeholder,
+}: {
+  label: string
+  value: string
+  onSave: (v: string) => void
+  placeholder?: string
+}) {
+  const [draft, setDraft] = useState(value)
+  useEffect(() => setDraft(value), [value])
+  const dirty = draft !== value
+
+  return (
+    <div>
+      <label className={LABEL} style={LABEL_STYLE}>
+        {label}
+      </label>
+      <div className="flex gap-2">
+        <input
+          type="number"
+          step="0.01"
+          inputMode="decimal"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder={placeholder}
+          className={FIELD}
+          style={FIELD_STYLE}
+        />
+        {dirty && (
+          <button
+            type="button"
+            onClick={() => onSave(draft)}
+            className="shrink-0 rounded-xl px-4 text-sm font-semibold"
+            style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+          >
+            Enregistrer
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Budgets : un brouillon local, enregistré en une fois. */
+function BudgetEditor({
+  categories,
+  budgets,
+  onSave,
+}: {
+  categories: Category[]
+  budgets: Record<string, number>
+  onSave: (next: Record<string, number>) => void
+}) {
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  useEffect(() => {
+    setDraft(Object.fromEntries(categories.map((c) => [c.id, budgets[c.id] ? String(budgets[c.id]) : ""])))
+  }, [categories, budgets])
+
+  const dirty = categories.some((c) => (draft[c.id] ?? "") !== (budgets[c.id] ? String(budgets[c.id]) : ""))
+
+  return (
+    <div className="space-y-2.5">
+      {categories.map((c) => (
+        <div key={c.id} className="flex items-center gap-3">
+          <Dot color={c.color} />
+          <span className="min-w-0 flex-1 truncate text-sm" style={{ color: "var(--t-paper)" }}>
+            {c.name}
+          </span>
+          <input
+            type="number"
+            step="1"
+            inputMode="decimal"
+            value={draft[c.id] ?? ""}
+            onChange={(e) => setDraft({ ...draft, [c.id]: e.target.value })}
+            placeholder="—"
+            className={`${FIELD} tnum !w-28 shrink-0 text-right`}
+            style={FIELD_STYLE}
+            aria-label={`Budget mensuel pour ${c.name}`}
+          />
+        </div>
+      ))}
+      {dirty && (
+        <button
+          type="button"
+          onClick={() => {
+            const next: Record<string, number> = {}
+            Object.entries(draft).forEach(([id, v]) => {
+              const n = parseFloat(v)
+              if (!Number.isNaN(n) && n > 0) next[id] = n
+            })
+            onSave(next)
+          }}
+          className="w-full rounded-xl py-3 font-semibold"
+          style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+        >
+          Enregistrer les budgets
+        </button>
       )}
     </div>
   )
