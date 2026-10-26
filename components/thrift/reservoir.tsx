@@ -33,15 +33,10 @@ export function Reservoir({ balance, income, daysLeft }: Props) {
   }, [])
   const level = filled ? ratio * 100 : 0
 
-  // La couleur du remplissage porte la sévérité : laiton tant que la marge est
-  // confortable, cuivre quand elle fond, argile en dépassement.
-  const fill = isOver
-    ? "var(--t-clay)"
-    : ratio < 0.12
-      ? "var(--t-clay)"
-      : ratio < 0.25
-        ? "#D98A3C"
-        : "var(--t-brass)"
+  // La couleur du remplissage porte la sévérité. Les trois teintes sont assez
+  // claires pour que le chiffre, écrit en encre par-dessus, reste au-delà de
+  // 6:1 — c'est justement quand la marge fond qu'il doit rester lisible.
+  const fill = isOver || ratio < 0.12 ? "var(--t-alert)" : ratio < 0.25 ? "#d98a3c" : "var(--t-brass)"
 
   const content = (
     <div className="flex h-full flex-col justify-end px-5 pb-7 pt-16 sm:px-8 sm:pb-9">
@@ -68,14 +63,14 @@ export function Reservoir({ balance, income, daysLeft }: Props) {
       {/* Le niveau. Seul élément décoratif de l'app, et il porte une donnée. */}
       <div
         aria-hidden
-        className="absolute inset-x-0 bottom-0 motion-safe:transition-[height] motion-safe:duration-[900ms] motion-safe:ease-out"
+        className="absolute inset-x-0 bottom-0 motion-safe:transition-[height] motion-safe:ease-out motion-safe:[transition-duration:900ms]"
         style={{ height: `${level}%`, backgroundColor: fill }}
       />
 
       {/* Copie claire, découpée au-dessus de la ligne de remplissage. */}
       <div
         aria-hidden
-        className="absolute inset-0 motion-safe:transition-[clip-path] motion-safe:duration-[900ms] motion-safe:ease-out"
+        className="absolute inset-0 motion-safe:transition-[clip-path] motion-safe:ease-out motion-safe:[transition-duration:900ms]"
         style={{ clipPath: `inset(0 0 ${level}% 0)`, color: "var(--t-paper)" }}
       >
         {content}
@@ -84,7 +79,7 @@ export function Reservoir({ balance, income, daysLeft }: Props) {
       {/* Copie sombre, découpée à l'intérieur du remplissage. */}
       <div
         aria-hidden
-        className="absolute inset-0 motion-safe:transition-[clip-path] motion-safe:duration-[900ms] motion-safe:ease-out"
+        className="absolute inset-0 motion-safe:transition-[clip-path] motion-safe:ease-out motion-safe:[transition-duration:900ms]"
         style={{ clipPath: `inset(${100 - level}% 0 0 0)`, color: "var(--t-ink)" }}
       >
         {content}

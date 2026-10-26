@@ -1,6 +1,8 @@
 "use client"
 
 import { useId, useMemo, useState } from "react"
+
+import { useWidth } from "./use-width"
 import type { Category, CategoryDelta, MonthPoint } from "@/lib/budget"
 import { euros, eurosRound, monthShort, signedEuros } from "@/lib/format"
 import { Empty } from "./ui"
@@ -76,7 +78,7 @@ export function CategoryBars({ rows, onSelect }: CategoryBarsProps) {
               </div>
 
               {budget ? (
-                <p className="mt-1 text-xs" style={{ color: isOver ? "var(--t-clay)" : "var(--t-sage)" }}>
+                <p className="mt-1 text-xs" style={{ color: isOver ? "var(--t-alert)" : "var(--t-sage)" }}>
                   {isOver ? `Dépassé de ${euros(over)} — budget ${eurosRound(budget)}` : `Budget ${eurosRound(budget)}`}
                 </p>
               ) : null}
@@ -103,6 +105,7 @@ const SERIES: Series[] = [
 export function EvolutionChart({ history }: { history: MonthPoint[] }) {
   const clipId = useId()
   const [hover, setHover] = useState<number | null>(null)
+  const { ref, width } = useWidth<HTMLDivElement>()
 
   if (history.length < 2) {
     return (
@@ -112,7 +115,8 @@ export function EvolutionChart({ history }: { history: MonthPoint[] }) {
     )
   }
 
-  const W = 720
+  // Une unité SVG = un pixel : le texte des axes garde sa taille réelle.
+  const W = Math.max(width, 1)
   const H = 220
   const PAD = { top: 16, right: 56, bottom: 28, left: 8 }
   const plotW = W - PAD.left - PAD.right
@@ -132,11 +136,15 @@ export function EvolutionChart({ history }: { history: MonthPoint[] }) {
 
   return (
     <figure className="m-0">
-      <div className="relative">
+      <div className="relative" ref={ref}>
+        {width === 0 ? (
+          <div style={{ height: H }} />
+        ) : (
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="w-full touch-none"
-          style={{ height: "auto" }}
+          width={W}
+          height={H}
+          className="block touch-none"
           role="img"
           aria-label="Évolution des dépenses, des charges fixes et de l'épargne mois par mois."
           onPointerLeave={() => setHover(null)}
@@ -231,6 +239,7 @@ export function EvolutionChart({ history }: { history: MonthPoint[] }) {
             ) : null
           )}
         </svg>
+        )}
       </div>
 
       <figcaption className="mt-3 space-y-2">
@@ -267,6 +276,8 @@ export function ProjectionChart({
   points: { month: string; solde: number; projected: boolean }[]
   currentMonth: string
 }) {
+  const { ref, width } = useWidth<HTMLDivElement>()
+
   if (points.length < 2) {
     return (
       <Empty title="Pas encore de projection">
@@ -275,7 +286,7 @@ export function ProjectionChart({
     )
   }
 
-  const W = 720
+  const W = Math.max(width, 1)
   const H = 200
   const PAD = { top: 18, right: 56, bottom: 26, left: 8 }
   const plotW = W - PAD.left - PAD.right
@@ -300,14 +311,20 @@ export function ProjectionChart({
 
   return (
     <figure className="m-0">
+      <div ref={ref}>
+        {width === 0 ? (
+          <div style={{ height: H }} />
+        ) : (
       <svg
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full"
+        width={W}
+        height={H}
+        className="block"
         role="img"
         aria-label={`Projection du solde d'épargne, de ${points[0].month} à ${last.month}.`}
       >
         {showZero ? (
-          <line x1={PAD.left} x2={PAD.left + plotW} y1={zeroY} y2={zeroY} stroke="var(--t-clay)" strokeWidth={1} />
+          <line x1={PAD.left} x2={PAD.left + plotW} y1={zeroY} y2={zeroY} stroke="var(--t-alert)" strokeWidth={1} />
         ) : null}
 
         <polyline
@@ -357,6 +374,8 @@ export function ProjectionChart({
           {monthShort(last.month)}
         </text>
       </svg>
+        )}
+      </div>
 
       <figcaption className="mt-2 text-xs" style={{ color: "var(--t-sage)" }}>
         Trait plein : épargne enregistrée jusqu'à {monthShort(currentMonth)}. Pointillés : projection au rythme moyen

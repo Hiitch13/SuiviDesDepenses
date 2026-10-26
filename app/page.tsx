@@ -52,7 +52,7 @@ import { dayLabel, euros, eurosRound, initials, monthLabel, ofMonth } from "@/li
 // un champ en `w-full` refuse sinon de rétrécir, déborde l'écran, et étire au
 // passage la barre d'onglets fixée en bas.
 const FIELD =
-  "w-full min-w-0 rounded-xl border px-3.5 py-3 text-base outline-none transition-colors placeholder:opacity-50 focus:border-[var(--t-brass)]"
+  "w-full min-w-0 rounded-xl border px-3.5 py-3 text-base outline-none transition-colors placeholder:text-[var(--t-sage)] focus:border-[var(--t-brass)]"
 const FIELD_STYLE = {
   backgroundColor: "var(--t-moss)",
   borderColor: "var(--t-line)",
@@ -907,7 +907,7 @@ export default function Thrift() {
                         <Dot color={c.color} className="mt-1.5" />
                         <span>
                           {c.name} dépasse son budget de{" "}
-                          <span className="tnum font-semibold" style={{ color: "var(--t-clay)" }}>
+                          <span className="tnum font-semibold" style={{ color: "var(--t-alert)" }}>
                             {euros(c.spent - c.budget)}
                           </span>
                         </span>
@@ -917,7 +917,7 @@ export default function Thrift() {
                       (pacing.isOver ? (
                         <p className="text-sm" style={{ color: "var(--t-paper)" }}>
                           Tu es à découvert de{" "}
-                          <span className="tnum font-semibold" style={{ color: "var(--t-clay)" }}>
+                          <span className="tnum font-semibold" style={{ color: "var(--t-alert)" }}>
                             {euros(pacing.value)}
                           </span>{" "}
                           pour ce mois.
@@ -1236,7 +1236,7 @@ export default function Thrift() {
                 déduits.
               </p>
               {projection.hasNegative && (
-                <p className="mt-3 text-sm" style={{ color: "var(--t-clay)" }}>
+                <p className="mt-3 text-sm" style={{ color: "var(--t-alert)" }}>
                   En l'état, le solde passe sous zéro avant la fin de la projection. Décale un projet ou augmente
                   l'épargne mensuelle.
                 </p>
@@ -1299,7 +1299,7 @@ export default function Thrift() {
                         <span className="text-xs" style={{ color: "var(--t-sage)" }}>
                           {PROJECT_TYPES[p.type].label} · {monthLabel(p.targetMonth)}
                           {p.included && feasible !== undefined && (
-                            <span style={{ color: feasible ? "var(--t-sage)" : "var(--t-clay)" }}>
+                            <span style={{ color: feasible ? "var(--t-sage)" : "var(--t-alert)" }}>
                               {feasible ? " · finançable" : " · hors budget"}
                             </span>
                           )}
@@ -1473,8 +1473,8 @@ export default function Thrift() {
                     </span>
                   </Row>
                   <Row onClick={deleteMonth}>
-                    <Trash2 className="size-4" style={{ color: "var(--t-clay)" }} />
-                    <span className="flex-1 text-sm" style={{ color: "var(--t-clay)" }}>
+                    <Trash2 className="size-4" style={{ color: "var(--t-alert)" }} />
+                    <span className="flex-1 text-sm" style={{ color: "var(--t-alert)" }}>
                       Supprimer {monthLabel(month)}
                     </span>
                   </Row>
@@ -1804,7 +1804,7 @@ function IconButton({
       // crie plus fort que les montants. Le rouge n'apparaît qu'à l'intention.
       className={cn(
         "shrink-0 rounded-lg p-2 text-[var(--t-sage)] transition-colors hover:bg-white/[0.06]",
-        danger && "hover:text-[var(--t-clay)] focus-visible:text-[var(--t-clay)]"
+        danger && "hover:text-[var(--t-alert)] focus-visible:text-[var(--t-alert)]"
       )}
     >
       {children}

@@ -19,7 +19,7 @@ export function Login({
   }
 
   const field =
-    "w-full rounded-xl border px-4 py-3.5 text-base outline-none transition-colors placeholder:opacity-55 focus:border-[var(--t-brass)]"
+    "w-full rounded-xl border px-4 py-3.5 text-base outline-none transition-colors placeholder:text-[var(--t-sage)] focus:border-[var(--t-brass)]"
   const fieldStyle = {
     backgroundColor: "var(--t-moss)",
     borderColor: "var(--t-line)",

@@ -33,9 +33,16 @@ l'argile : la couleur porte la sévérité (contrat « meter »).
 | `--moss`   | `#13362E` | blocs surélevés, champs de saisie        |
 | `--line`   | `#1D4A3F` | filets de séparation                     |
 | `--paper`  | `#F2EDE1` | texte principal, panneaux inversés       |
-| `--sage`   | `#8A9A94` | texte secondaire, catégorie « Autres »   |
+| `--sage`   | `#97A5A0` | texte secondaire, catégorie « Autres »   |
 | `--brass`  | `#E8B84B` | l'unique accent : ce qu'il reste, action |
-| `--clay`   | `#C8402F` | dépassement, suppression                 |
+| `--clay`   | `#C8402F` | aplats destructifs uniquement            |
+| `--alert`  | `#EF7F6B` | texte et tracés d'alerte sur fond sombre |
+
+L'argile ne sert qu'en aplat : sur fond sombre elle plafonne à 3,2:1, trop peu
+pour du texte. Tout ce qui alerte par les mots ou par un tracé prend `--alert`,
+qui passe 4,5:1 sur les trois fonds. Les trois teintes de remplissage du
+réservoir sont assez claires pour que le chiffre en encre par-dessus reste
+au-delà de 6:1, y compris quand la marge fond.
 
 Le fond est un vert de pin franc, pas un noir teinté. L'accent est un laiton
 chaud et désaturé, pas un vert acide. Ces deux écarts sont volontaires : le
@@ -58,7 +65,7 @@ valides), puis en prenant celle dont les associations sont les plus évidentes.
 | Shopping     | `#9085e9` |
 | Santé        | `#e66767` |
 | Épargne      | `#008300` |
-| Autres       | `--sage`  |
+| Autres       | `#97a5a0` |
 
 Écart le plus faible : ΔE 8,6 en deutéranopie, 19,3 en vision normale — au-dessus
 des planchers (8 et 15). `#199e70` reste libre pour une catégorie personnalisée.

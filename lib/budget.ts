@@ -70,7 +70,7 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: "shopping", name: "Shopping", color: "#9085e9" },
   { id: "sante", name: "Santé", color: "#e66767" },
   { id: "epargne", name: "Épargne", color: "#008300" },
-  { id: "autres", name: "Autres", color: "#8a9a94" },
+  { id: "autres", name: "Autres", color: "#97a5a0" },
 ]
 
 // Teintes proposées pour une catégorie créée par l'utilisateur. La première est

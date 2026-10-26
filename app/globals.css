@@ -16,9 +16,12 @@
     --t-line: #1d4a3f;
     --t-paper: #f2ede1;
     --t-mist: #b9c7c1;
-    --t-sage: #8a9a94;
+    --t-sage: #97a5a0;
     --t-brass: #e8b84b;
+    /* Argile : uniquement en aplat (toasts destructifs). Sur fond sombre elle
+       ne fait que 3,2:1, donc le texte et les tracés d'alerte prennent --t-alert. */
     --t-clay: #c8402f;
+    --t-alert: #ef7f6b;
 
     /* Catégories — ordre figé, validé sur --t-pine. Ne pas permuter. */
     --t-cat-alimentation: #d95926;
@@ -28,7 +31,7 @@
     --t-cat-shopping: #9085e9;
     --t-cat-sante: #e66767;
     --t-cat-epargne: #008300;
-    --t-cat-autres: #8a9a94;
+    --t-cat-autres: #97a5a0;
     --t-cat-libre: #199e70;
 
     --background: 170.5 57.6% 6.5%;
