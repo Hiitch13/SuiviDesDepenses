@@ -129,6 +129,11 @@ export default function Thrift() {
   const [newCategoryName, setNewCategoryName] = useState("")
   const [newCategoryColor, setNewCategoryColor] = useState(CUSTOM_CATEGORY_COLORS[0])
 
+  // Création d'une catégorie directement depuis la saisie d'une dépense.
+  const [isAddingCategory, setIsAddingCategory] = useState(false)
+  const [quickCategoryName, setQuickCategoryName] = useState("")
+  const [quickCategoryColor, setQuickCategoryColor] = useState(CUSTOM_CATEGORY_COLORS[0])
+
   // Projets
   const [newProjectName, setNewProjectName] = useState("")
   const [newProjectAmount, setNewProjectAmount] = useState("")
@@ -707,32 +712,58 @@ export default function Thrift() {
     }
   }
 
-  async function addCustomCategory(e: FormEvent) {
-    e.preventDefault()
-    if (!newCategoryName.trim()) return
+  /**
+   * Crée une catégorie personnalisée à partir d'un nom et d'une couleur, puis la
+   * persiste. Renvoie la catégorie créée, ou null si la saisie est invalide ou
+   * si la sauvegarde échoue. Partagé entre l'écran des réglages et la saisie
+   * d'une dépense, pour pouvoir créer une catégorie là où l'on en a besoin.
+   */
+  async function createCategory(name: string, color: string): Promise<Category | null> {
+    if (!name.trim()) return null
 
-    const id = newCategoryName
+    const id = name
       .trim()
       .toLowerCase()
       .normalize("NFD")
-      .replace(/[̀-ͯ]/g, "")
+      .replace(/[\u0300-\u036f]/g, "")
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "")
 
     if (!id || categories.some((c) => c.id === id)) {
       toast({ title: "Cette catégorie existe déjà", variant: "destructive" })
-      return
+      return null
     }
 
-    const newList = [...customCategories, { id, name: newCategoryName.trim(), color: newCategoryColor }]
+    const newCategory = { id, name: name.trim(), color }
+    const newList = [...customCategories, newCategory]
     if (await saveCustomCategories(newList)) {
       setCustomCategories(newList)
-      setCategory(id)
+      return newCategory
+    }
+    toast({ title: "Erreur lors de l'ajout", variant: "destructive" })
+    return null
+  }
+
+  async function addCustomCategory(e: FormEvent) {
+    e.preventDefault()
+    const created = await createCategory(newCategoryName, newCategoryColor)
+    if (created) {
+      setCategory(created.id)
       setNewCategoryName("")
       setNewCategoryColor(CUSTOM_CATEGORY_COLORS[0])
       toast({ title: "Catégorie ajoutée" })
-    } else {
-      toast({ title: "Erreur lors de l'ajout", variant: "destructive" })
+    }
+  }
+
+  /** Ajoute la catégorie saisie dans la feuille « Noter une dépense », puis la sélectionne. */
+  async function submitQuickCategory() {
+    const created = await createCategory(quickCategoryName, quickCategoryColor)
+    if (created) {
+      setCategory(created.id)
+      setQuickCategoryName("")
+      setQuickCategoryColor(CUSTOM_CATEGORY_COLORS[0])
+      setIsAddingCategory(false)
+      toast({ title: "Catégorie ajoutée" })
     }
   }
 
@@ -2279,7 +2310,75 @@ export default function Thrift() {
                   {c.name}
                 </Chip>
               ))}
+              {!isAddingCategory && (
+                <button
+                  type="button"
+                  onClick={() => setIsAddingCategory(true)}
+                  className="flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-sm transition-colors"
+                  style={{ backgroundColor: "var(--t-moss)", borderColor: "var(--t-line)", color: "var(--t-brass)" }}
+                >
+                  <Plus className="size-4" /> Nouvelle
+                </button>
+              )}
             </div>
+
+            {isAddingCategory && (
+              <div className="mt-2.5 rounded-xl border p-3" style={{ borderColor: "var(--t-line)" }}>
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    value={quickCategoryName}
+                    onChange={(e) => setQuickCategoryName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && quickCategoryName.trim()) {
+                        e.preventDefault()
+                        submitQuickCategory()
+                      }
+                    }}
+                    placeholder="Nom de la catégorie"
+                    className={FIELD}
+                    style={FIELD_STYLE}
+                    aria-label="Nom de la nouvelle catégorie"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsAddingCategory(false)
+                      setQuickCategoryName("")
+                    }}
+                    className="shrink-0 rounded-xl px-3"
+                    style={{ color: "var(--t-sage)" }}
+                    aria-label="Annuler la création de catégorie"
+                  >
+                    <X className="size-4" />
+                  </button>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  {CUSTOM_CATEGORY_COLORS.map((c) => (
+                    <button
+                      key={c}
+                      type="button"
+                      onClick={() => setQuickCategoryColor(c)}
+                      className="flex size-8 items-center justify-center rounded-full"
+                      style={{ backgroundColor: c }}
+                      aria-label={`Couleur ${c}`}
+                      aria-pressed={quickCategoryColor === c}
+                    >
+                      {quickCategoryColor === c && <Check className="size-4" style={{ color: "var(--t-ink)" }} />}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={submitQuickCategory}
+                    disabled={!quickCategoryName.trim()}
+                    className="ml-auto rounded-xl px-4 py-2 text-sm font-semibold disabled:opacity-50"
+                    style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                  >
+                    Ajouter
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>
