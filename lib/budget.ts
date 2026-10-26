@@ -102,6 +102,26 @@ export function currentMonthKey(now: Date = new Date()): string {
   return `${now.getFullYear()}-${(now.getMonth() + 1).toString().padStart(2, "0")}`
 }
 
+/** Dernier jour d'un mois "YYYY-MM", au format ISO. */
+export function lastDayOf(ym: string): string {
+  const [y, m] = ym.split("-").map(Number)
+  return `${ym}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`
+}
+
+/**
+ * Date proposée pour une dépense saisie dans un mois donné : aujourd'hui si
+ * l'on est bien dans ce mois, sinon son dernier jour. Une dépense ne doit
+ * jamais porter une date hors du mois qui la contient.
+ */
+export function defaultDateFor(ym: string, now: Date = new Date()): string {
+  if (!ym) return now.toISOString().split("T")[0]
+  if (ym === currentMonthKey(now)) {
+    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+    return local.toISOString().split("T")[0]
+  }
+  return lastDayOf(ym)
+}
+
 // === Soldes du mois affiché ===
 export type MonthTotals = {
   totalExpenses: number

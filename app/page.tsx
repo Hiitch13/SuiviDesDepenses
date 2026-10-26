@@ -37,7 +37,9 @@ import {
   computeTotals,
   currentMonthKey,
   daysLeftInMonth,
+  defaultDateFor,
   frequentSuggestions,
+  lastDayOf,
   monthlyHistory,
   overBudgetCategories,
   spendByCategory,
@@ -99,6 +101,9 @@ export default function Thrift() {
   const [amount, setAmount] = useState("")
   const [description, setDescription] = useState("")
   const [category, setCategory] = useState("alimentation")
+  const [expenseDate, setExpenseDate] = useState("")
+  // Dépense en cours de modification ; null quand on en saisit une nouvelle.
+  const [editingExpense, setEditingExpense] = useState<Expense | null>(null)
 
   // Charges fixes
   const [fixedAmount, setFixedAmount] = useState("")
@@ -462,7 +467,12 @@ export default function Thrift() {
   // ==========================================
   // 6. Dépenses
   // ==========================================
-  async function logExpense(expAmount: number, expDescription: string, expCategory: string) {
+  async function logExpense(
+    expAmount: number,
+    expDescription: string,
+    expCategory: string,
+    expDate: string = defaultDateFor(month)
+  ) {
     if (!expAmount) return false
 
     const newExp: Expense = {
@@ -470,7 +480,7 @@ export default function Thrift() {
       amount: expAmount,
       description: expDescription.trim() || categories.find((c) => c.id === expCategory)?.name || "Dépense",
       category: expCategory,
-      date: new Date().toISOString().split("T")[0],
+      date: expDate,
     }
 
     const newExps = [newExp, ...expenses]
@@ -498,11 +508,52 @@ export default function Thrift() {
     return false
   }
 
-  async function addExpense(e: FormEvent) {
+  function openExpenseSheet(expense?: Expense) {
+    if (expense) {
+      setEditingExpense(expense)
+      setAmount(String(expense.amount))
+      setDescription(expense.description)
+      setCategory(expense.category)
+      setExpenseDate(expense.date)
+    } else {
+      setEditingExpense(null)
+      setAmount("")
+      setDescription("")
+      setCategory("alimentation")
+      setExpenseDate(defaultDateFor(month))
+    }
+    setIsQuickAddOpen(true)
+  }
+
+  async function submitExpense(e: FormEvent) {
     e.preventDefault()
     if (!amount) return
 
-    if (await logExpense(parseFloat(amount), description, category)) {
+    const value = parseFloat(amount)
+    if (Number.isNaN(value)) return
+
+    if (editingExpense) {
+      const updated = expenses.map((x) =>
+        x.id === editingExpense.id
+          ? {
+              ...x,
+              amount: value,
+              description: description.trim() || categories.find((c) => c.id === category)?.name || "Dépense",
+              category,
+              date: expenseDate || x.date,
+            }
+          : x
+      )
+      if (await saveData(updated, fixedExpenses)) {
+        setExpenses(updated)
+        setIsQuickAddOpen(false)
+        setEditingExpense(null)
+        toast({ title: "Dépense modifiée" })
+      }
+      return
+    }
+
+    if (await logExpense(value, description, category, expenseDate || defaultDateFor(month))) {
       setAmount("")
       setDescription("")
       setCategory("alimentation")
@@ -1120,6 +1171,7 @@ export default function Thrift() {
                         key={e.id}
                         expense={e}
                         category={catById(e.category)}
+                        onEdit={() => openExpenseSheet(e)}
                         onDelete={() => deleteExpense(e.id)}
                       />
                     ))
@@ -1202,7 +1254,8 @@ export default function Thrift() {
                       expense={e}
                       category={catById(e.category)}
                       showMonth={scopeAllMonths ? e.month : undefined}
-                      onDelete={!scopeAllMonths || e.month === month ? () => deleteExpense(e.id) : undefined}
+                      onEdit={e.month === month ? () => openExpenseSheet(e) : undefined}
+                      onDelete={e.month === month ? () => deleteExpense(e.id) : undefined}
                     />
                   ))
               )}
@@ -1529,11 +1582,18 @@ export default function Thrift() {
         )}
       </main>
 
-      <Dock screen={screen} onScreen={setScreen} onAdd={() => setIsQuickAddOpen(true)} canAdd={!!month} />
+      <Dock screen={screen} onScreen={setScreen} onAdd={() => openExpenseSheet()} canAdd={!!month} />
 
       {/* ===================== Noter une dépense ===================== */}
-      <Sheet open={isQuickAddOpen} onOpenChange={setIsQuickAddOpen} title="Noter une dépense">
-        {suggestions.length > 0 && (
+      <Sheet
+        open={isQuickAddOpen}
+        onOpenChange={(v) => {
+          setIsQuickAddOpen(v)
+          if (!v) setEditingExpense(null)
+        }}
+        title={editingExpense ? "Modifier la dépense" : "Noter une dépense"}
+      >
+        {!editingExpense && suggestions.length > 0 && (
           <div className="mb-4">
             <p className={LABEL} style={LABEL_STYLE}>
               Tes habitudes
@@ -1558,7 +1618,7 @@ export default function Thrift() {
           </div>
         )}
 
-        <form onSubmit={addExpense} className="space-y-3">
+        <form onSubmit={submitExpense} className="space-y-3">
           <div>
             <label htmlFor="qa-montant" className={LABEL} style={LABEL_STYLE}>
               Montant
@@ -1592,6 +1652,22 @@ export default function Thrift() {
           </div>
 
           <div>
+            <label htmlFor="qa-date" className={LABEL} style={LABEL_STYLE}>
+              Date
+            </label>
+            <input
+              id="qa-date"
+              type="date"
+              value={expenseDate}
+              min={month ? `${month}-01` : undefined}
+              max={month ? lastDayOf(month) : undefined}
+              onChange={(e) => setExpenseDate(e.target.value)}
+              className={FIELD}
+              style={FIELD_STYLE}
+            />
+          </div>
+
+          <div>
             <label htmlFor="qa-desc" className={LABEL} style={LABEL_STYLE}>
               Description (facultative)
             </label>
@@ -1611,7 +1687,7 @@ export default function Thrift() {
             className="w-full rounded-xl py-3.5 text-base font-semibold disabled:opacity-50"
             style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
           >
-            Noter la dépense
+            {editingExpense ? "Enregistrer" : "Noter la dépense"}
           </button>
         </form>
       </Sheet>
@@ -1871,16 +1947,23 @@ function ExpenseRow({
   category,
   showMonth,
   onDelete,
+  onEdit,
 }: {
   expense: Expense
   category?: Category
   showMonth?: string
   onDelete?: () => void
+  onEdit?: () => void
 }) {
   return (
     <Row>
       <Dot color={category?.color ?? "var(--t-sage)"} />
-      <span className="min-w-0 flex-1">
+      <button
+        type="button"
+        onClick={onEdit}
+        disabled={!onEdit}
+        className="min-w-0 flex-1 rounded-lg text-left disabled:cursor-default"
+      >
         <span className="block truncate text-sm" style={{ color: "var(--t-paper)" }}>
           {expense.description}
         </span>
@@ -1889,7 +1972,7 @@ function ExpenseRow({
           {showMonth ? ` · ${monthLabel(showMonth)}` : ""}
           {category ? ` · ${category.name}` : ""}
         </span>
-      </span>
+      </button>
       <Amount>{euros(expense.amount)}</Amount>
       {onDelete && (
         <IconButton label={`Supprimer ${expense.description}`} onClick={onDelete} danger>
