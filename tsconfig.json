@@ -10,6 +10,9 @@
     "module": "esnext",
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
+    // Les fichiers de test importent avec l'extension .ts : c'est ce
+    // qu'attend le lanceur intégré de Node, qui exécute le TypeScript tel quel.
+    "allowImportingTsExtensions": true,
     "isolatedModules": true,
     "jsx": "preserve",
     "incremental": true,

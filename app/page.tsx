@@ -390,6 +390,46 @@ export default function Thrift() {
     }
   }
 
+  /**
+   * Ouvre le mois en cours d'un geste, en reprenant le dernier salaire connu.
+   * On le propose plutôt que de le créer d'office : écrire dans le compte de
+   * quelqu'un sans qu'il l'ait demandé est une mauvaise surprise.
+   */
+  async function openCurrentMonth() {
+    if (!currentUser || isLoading) return
+
+    const previous = [...allMonthsData].sort((a, b) => a.month.localeCompare(b.month)).pop()
+    try {
+      setIsLoading(true)
+      const response = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          month: currentMonthStr,
+          salary: previous?.salary ?? 0,
+          expenses: [],
+          fixedExpenses: [],
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        throw new Error(data.error || "Impossible d'ouvrir le mois")
+      }
+      await fetchAllMonths()
+      await fetchMonthData(currentMonthStr)
+      toast({ title: `${monthLabel(currentMonthStr)} ouvert` })
+    } catch (error) {
+      console.error(error)
+      toast({
+        title: "Erreur",
+        description: error instanceof Error ? error.message : "Impossible d'ouvrir le mois.",
+        variant: "destructive",
+      })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   async function deleteMonth() {
     if (!month || !currentUser) return
     if (!confirm(`Supprimer ${monthLabel(month)} et toutes ses dépenses ?`)) return
@@ -906,6 +946,10 @@ export default function Thrift() {
 
   const catById = (id: string) => categories.find((c) => c.id === id)
 
+  // Le mois réel n'existe pas encore, mais d'autres mois sont enregistrés :
+  // sans ce rappel on atterrit sur le mois précédent sans comprendre pourquoi.
+  const needsCurrentMonth = allMonths.length > 0 && !allMonths.includes(currentMonthStr) && !!month
+
   // ==========================================
   // 12. Rendu
   // ==========================================
@@ -977,6 +1021,23 @@ export default function Thrift() {
               <Reservoir balance={totals.balance} income={totals.totalIncome} daysLeft={daysLeft} />
 
               <div className="space-y-4 px-4 pt-4">
+                {needsCurrentMonth && (
+                  <Panel className="flex flex-wrap items-center gap-3">
+                    <p className="min-w-0 flex-1 text-sm" style={{ color: "var(--t-paper)" }}>
+                      {monthLabel(currentMonthStr)} n'est pas encore ouvert. Tu regardes {monthLabel(month)}.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={openCurrentMonth}
+                      disabled={isLoading}
+                      className="shrink-0 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-50"
+                      style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+                    >
+                      Ouvrir {monthLabel(currentMonthStr).split(" ")[0]}
+                    </button>
+                  </Panel>
+                )}
+
                 {/* Ce qui mérite une réaction, en haut. */}
                 {(overBudget.length > 0 || pacing) && (
                   <Panel className="space-y-2.5">
