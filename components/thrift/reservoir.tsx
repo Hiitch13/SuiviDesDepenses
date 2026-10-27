@@ -10,6 +10,8 @@ type Props = {
   income: number
   /** Jours restants dans le mois, ou null si le mois affiché n'est pas le mois en cours. */
   daysLeft: number | null
+  /** Vrai quand le décompte se cale sur le prochain jour de paie plutôt que la fin du mois. */
+  payDaySet?: boolean
 }
 
 /**
@@ -20,7 +22,7 @@ type Props = {
  * copie découpée sur la ligne de remplissage — en papier sur le fond sombre, en
  * encre sur le laiton — pour rester lisible quelle que soit la hauteur.
  */
-export function Reservoir({ balance, income, daysLeft }: Props) {
+export function Reservoir({ balance, income, daysLeft, payDaySet }: Props) {
   const isOver = balance < 0
   const ratio = income > 0 ? Math.max(0, Math.min(1, balance / income)) : 0
 
@@ -50,7 +52,7 @@ export function Reservoir({ balance, income, daysLeft }: Props) {
         {isOver
           ? `au-delà de ${eurosRound(income)} de revenus`
           : `sur ${eurosRound(income)} de revenus`}
-        {daysLeft !== null && ` · ${daysLeft} jour${daysLeft > 1 ? "s" : ""} avant la fin du mois`}
+        {daysLeft !== null && ` · ${daysLeft} jour${daysLeft > 1 ? "s" : ""} avant ${payDaySet ? "la prochaine paie" : "la fin du mois"}`}
       </p>
     </div>
   )
@@ -90,7 +92,7 @@ export function Reservoir({ balance, income, daysLeft }: Props) {
         {isOver
           ? `Tu es à découvert de ${euros(Math.abs(balance))} sur ${eurosRound(income)} de revenus.`
           : `Il te reste ${euros(balance)} sur ${eurosRound(income)} de revenus.`}
-        {daysLeft !== null && ` ${daysLeft} jours avant la fin du mois.`}
+        {daysLeft !== null && ` ${daysLeft} jours avant ${payDaySet ? "la prochaine paie" : "la fin du mois"}.`}
       </div>
     </section>
   )

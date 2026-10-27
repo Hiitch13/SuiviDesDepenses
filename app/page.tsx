@@ -36,7 +36,7 @@ import {
   compareToPreviousMonth,
   computeTotals,
   currentMonthKey,
-  daysLeftInMonth,
+  daysRemaining,
   defaultDateFor,
   frequentSuggestions,
   lastDayOf,
@@ -104,6 +104,8 @@ export default function Thrift() {
   const [initialSavings, setInitialSavings] = useState(0)
   const [initialSavingsInput, setInitialSavingsInput] = useState("0")
   const [initialSavingsMonth, setInitialSavingsMonth] = useState("")
+  // Jour du mois où tombe la paie (1-31). 0 = fin du mois.
+  const [payDay, setPayDay] = useState(0)
 
   // Saisie d'une dépense
   const [isQuickAddOpen, setIsQuickAddOpen] = useState(false)
@@ -258,6 +260,7 @@ export default function Thrift() {
       setInitialSavings(data.initialSavings || 0)
       setInitialSavingsInput(String(data.initialSavings || 0))
       setInitialSavingsMonth(data.initialSavingsMonth || "")
+      setPayDay(data.payDay || 0)
     } catch (error) {
       console.error(error)
     } finally {
@@ -799,6 +802,28 @@ export default function Thrift() {
     }
   }
 
+  async function savePayDay(value: number) {
+    if (!currentUser) return false
+    try {
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isPayDayUpdate: true, payDay: value }),
+      })
+      if (res.ok) {
+        setPayDay(value)
+        toast({ title: value ? `Jour de paie : le ${value}` : "Jour de paie : fin du mois" })
+      } else {
+        toast({ title: "Erreur lors de l'enregistrement", variant: "destructive" })
+      }
+      return res.ok
+    } catch (error) {
+      console.error(error)
+      toast({ title: "Erreur lors de l'enregistrement", variant: "destructive" })
+      return false
+    }
+  }
+
   // ==========================================
   // 8. Projets et solde de départ
   // ==========================================
@@ -1112,8 +1137,8 @@ export default function Thrift() {
   })
   const spend = spendByCategory(expenses, categories)
   const overBudget = overBudgetCategories(categories, spend, categoryBudgets)
-  const pacing = weeklyPacing(month, totals.balance)
-  const daysLeft = daysLeftInMonth(month)
+  const pacing = weeklyPacing(month, totals.balance, new Date(), payDay || null)
+  const daysLeft = daysRemaining(month, payDay || null)
 
   const savingsGoalNum = parseFloat(savingsGoalInput) || 0
   const savedThisMonth = spend["epargne"] || 0
@@ -1462,7 +1487,7 @@ export default function Thrift() {
             </div>
           ) : (
             <>
-              <Reservoir balance={totals.balance} income={totals.totalIncome} daysLeft={daysLeft} />
+              <Reservoir balance={totals.balance} income={totals.totalIncome} daysLeft={daysLeft} payDaySet={!!payDay} />
 
               <div className="space-y-4 px-4 pt-4">
                 {needsCurrentMonth && (
@@ -2094,6 +2119,27 @@ export default function Thrift() {
                   if (await saveCategoryBudgets(next)) setCategoryBudgets(next)
                 }}
               />
+            </Panel>
+
+            <Panel>
+              <SectionTitle>Jour de paie</SectionTitle>
+              <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
+                Le décompte des jours restants se cale sur ta prochaine paie plutôt que sur la fin du mois.
+              </p>
+              <select
+                value={payDay}
+                onChange={(e) => savePayDay(Number(e.target.value))}
+                className={`${FIELD} appearance-none`}
+                style={FIELD_STYLE}
+                aria-label="Jour du mois où tombe la paie"
+              >
+                <option value={0}>Fin du mois</option>
+                {Array.from({ length: 31 }, (_, i) => i + 1).map((d) => (
+                  <option key={d} value={d}>
+                    Le {d}
+                  </option>
+                ))}
+              </select>
             </Panel>
 
             <Panel flush>

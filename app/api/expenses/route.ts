@@ -12,6 +12,7 @@ import {
   getUser,
   getUserMonths,
   updateInitialSavings,
+  updatePayDay,
   updateUserField,
   upsertMonthStatement,
 } from "@/lib/db"
@@ -62,6 +63,7 @@ export async function GET(request: Request) {
       projects: record.projects,
       initialSavings: record.initialSavings,
       initialSavingsMonth: record.initialSavingsMonth,
+      payDay: record.payDay,
     })
   } catch (error) {
     return storageError(error)
@@ -103,6 +105,15 @@ export async function POST(request: Request) {
         typeof initialSavings === "number" ? initialSavings : undefined,
         typeof initialSavingsMonth === "string" ? initialSavingsMonth : undefined
       )
+      return NextResponse.json({ success: true })
+    }
+
+    if (body.isPayDayUpdate) {
+      const payDay = Number(body.payDay)
+      if (!Number.isInteger(payDay) || payDay < 0 || payDay > 31) {
+        return NextResponse.json({ error: "Jour de paie invalide" }, { status: 400 })
+      }
+      await updatePayDay(user, payDay)
       return NextResponse.json({ success: true })
     }
 

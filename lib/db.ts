@@ -57,6 +57,8 @@ export type UserRecord = {
   // Solde d'épargne de départ et mois de référence de la projection
   initialSavings: number;
   initialSavingsMonth: string;
+  // Jour du mois où tombe la paie (1-31). 0 = fin du mois.
+  payDay: number;
 };
 
 export type MonthData = {
@@ -90,7 +92,8 @@ const SCHEMA = [
     category_budgets TEXT NOT NULL DEFAULT '{}',
     projects TEXT NOT NULL DEFAULT '[]',
     initial_savings REAL NOT NULL DEFAULT 0,
-    initial_savings_month TEXT NOT NULL DEFAULT ''
+    initial_savings_month TEXT NOT NULL DEFAULT '',
+    pay_day INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS months (
     user TEXT NOT NULL,
@@ -151,13 +154,27 @@ export function ensureSchema(): Promise<void> {
   if (!schemaReady) {
     schemaReady = getDb()
       .batch(SCHEMA, "write")
-      .then(() => undefined)
+      .then(() => migrate())
       .catch((error) => {
         schemaReady = null;
         throw error;
       });
   }
   return schemaReady;
+}
+
+/**
+ * Ajoute les colonnes apparues après coup aux bases déjà en place. `CREATE TABLE
+ * IF NOT EXISTS` ne touche pas une table existante, donc une colonne nouvelle y
+ * est absente : on la pose ici, sans risque de doublon, en vérifiant d'abord sa
+ * présence.
+ */
+async function migrate(): Promise<void> {
+  const { rows } = await getDb().execute({ sql: "PRAGMA table_info(users)", args: [] });
+  const hasPayDay = rows.some((r) => String(r.name) === "pay_day");
+  if (!hasPayDay) {
+    await getDb().execute({ sql: "ALTER TABLE users ADD COLUMN pay_day INTEGER NOT NULL DEFAULT 0", args: [] });
+  }
 }
 
 // === Lecture ===
@@ -186,6 +203,7 @@ export async function getUser(username: string): Promise<UserRecord | null> {
     projects: parseJson(row.projects, []),
     initialSavings: Number(row.initial_savings) || 0,
     initialSavingsMonth: String(row.initial_savings_month ?? ""),
+    payDay: Number(row.pay_day) || 0,
   };
 }
 
@@ -265,6 +283,13 @@ export async function updateInitialSavings(
   await getDb().execute({
     sql: `UPDATE users SET ${sets.join(", ")} WHERE username = ?`,
     args: [...args, username],
+  });
+}
+
+export async function updatePayDay(username: string, payDay: number): Promise<void> {
+  await getDb().execute({
+    sql: "UPDATE users SET pay_day = ? WHERE username = ?",
+    args: [payDay, username],
   });
 }
 

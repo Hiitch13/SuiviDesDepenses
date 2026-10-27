@@ -8,6 +8,8 @@ import {
   buildProjection,
   compareToPreviousMonth,
   computeTotals,
+  daysRemaining,
+  daysUntilPayday,
   defaultDateFor,
   frequentSuggestions,
   lastDayOf,
@@ -108,6 +110,34 @@ describe("rythme de dépense", () => {
 
   test("aucun rythme pour un mois qui n'est pas le mois en cours", () => {
     assert.equal(weeklyPacing("2026-03", 600, dans(10)), null)
+  })
+})
+
+describe("jour de paie", () => {
+  const dans = (jour: number) => new Date(2026, 9, jour) // octobre 2026, 31 jours
+
+  test("le décompte court jusqu'au prochain jour de paie du même mois", () => {
+    // Paie le 15 : depuis le 10, il reste 6 jours (10 → 15 inclus).
+    assert.equal(daysUntilPayday(15, dans(10)), 6)
+  })
+
+  test("une fois le jour de paie passé, on compte jusqu'au mois suivant", () => {
+    // Paie le 5 : depuis le 27, la prochaine paie tombe le 5 novembre.
+    assert.equal(daysUntilPayday(5, dans(27)), 10)
+  })
+
+  test("un jour de paie au-delà du mois est ramené au dernier jour", () => {
+    // « 31 » en février 2026 (28 jours) devient le 28.
+    assert.equal(daysUntilPayday(31, new Date(2026, 1, 10)), 19)
+  })
+
+  test("sans jour de paie, daysRemaining reste calé sur la fin du mois", () => {
+    assert.equal(daysRemaining("2026-10", null, dans(28)), 4)
+  })
+
+  test("le rythme suit la prochaine paie quand elle est renseignée", () => {
+    const p = weeklyPacing("2026-10", 300, dans(28), 5)
+    assert.equal(p?.days, 9) // 28 octobre → 5 novembre
   })
 })
 

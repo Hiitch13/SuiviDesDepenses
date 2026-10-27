@@ -56,6 +56,8 @@ export type AllData = {
   projects?: Project[]
   initialSavings?: number
   initialSavingsMonth?: string
+  /** Jour du mois où tombe la paie (1-31). 0 = fin du mois (comportement par défaut). */
+  payDay?: number
 }
 
 // === Catégories ===
@@ -187,6 +189,38 @@ export function daysLeftInMonth(month: string, now: Date = new Date()): number |
   return Math.round((lastDay.getTime() - today.getTime()) / 86400000) + 1
 }
 
+/**
+ * Jours restants jusqu'au prochain jour de paie, aujourd'hui inclus.
+ *
+ * Le jour de paie est ramené au dernier jour du mois s'il le dépasse (un « 31 »
+ * en février devient le 28/29). S'il est déjà passé ce mois-ci, on compte jusqu'à
+ * la paie du mois suivant : c'est la date à laquelle l'argent doit suffire.
+ */
+export function daysUntilPayday(payDay: number, now: Date = new Date()): number {
+  const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  const thisMonthDay = Math.min(payDay, daysInMonth(now.getFullYear(), now.getMonth()))
+  let target = new Date(now.getFullYear(), now.getMonth(), thisMonthDay)
+  if (target < today) {
+    const next = new Date(now.getFullYear(), now.getMonth() + 1, 1)
+    const nextMonthDay = Math.min(payDay, daysInMonth(next.getFullYear(), next.getMonth()))
+    target = new Date(next.getFullYear(), next.getMonth(), nextMonthDay)
+  }
+  return Math.round((target.getTime() - today.getTime()) / 86400000) + 1
+}
+
+/**
+ * Jours restants pour le mois affiché : jusqu'au prochain jour de paie s'il est
+ * renseigné, sinon jusqu'à la fin du mois. Null si le mois affiché n'est pas le
+ * mois en cours (le rythme n'a de sens qu'« aujourd'hui »).
+ */
+export function daysRemaining(month: string, payDay?: number | null, now: Date = new Date()): number | null {
+  if (month !== currentMonthKey(now)) return null
+  if (payDay && payDay >= 1 && payDay <= 31) return daysUntilPayday(payDay, now)
+  return daysLeftInMonth(month, now)
+}
+
 export type Pacing = {
   isOver: boolean
   /** Montant par période restante, ou le découvert en valeur absolue. */
@@ -196,9 +230,14 @@ export type Pacing = {
   unit: "semaine" | "jour"
 }
 
-/** Ce qu'il reste par semaine — ou par jour en fin de mois — pour tenir sans découvert. */
-export function weeklyPacing(month: string, balance: number, now: Date = new Date()): Pacing | null {
-  const days = daysLeftInMonth(month, now)
+/** Ce qu'il reste par semaine — ou par jour en fin de période — pour tenir sans découvert. */
+export function weeklyPacing(
+  month: string,
+  balance: number,
+  now: Date = new Date(),
+  payDay?: number | null
+): Pacing | null {
+  const days = daysRemaining(month, payDay, now)
   if (days === null) return null
   if (balance < 0) return { isOver: true, value: Math.abs(balance), days, unit: "semaine" }
 
