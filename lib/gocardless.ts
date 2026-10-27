@@ -94,14 +94,31 @@ async function getAccessToken(): Promise<string> {
   if (!res.ok) throw new Error(`GoCardless : échec du jeton (${res.status})`)
 
   const data = (await res.json()) as {
-    access: string
-    access_expires: number
+    access?: string
+    access_expires?: number
     refresh: string
     refresh_expires: number
   }
+
+  // Selon les versions de l'API, /token/new/ renvoie directement un access
+  // token, ou seulement le refresh qu'il faut échanger. On couvre les deux cas.
+  let access = data.access
+  let accessExpires = data.access_expires
+  if (!access) {
+    const refreshed = await fetch(`${GOCARDLESS_BASE}/token/refresh/`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh: data.refresh }),
+    })
+    if (!refreshed.ok) throw new Error(`GoCardless : échec du rafraîchissement (${refreshed.status})`)
+    const r = (await refreshed.json()) as { access: string; access_expires: number }
+    access = r.access
+    accessExpires = r.access_expires
+  }
+
   cachedToken = {
-    access: data.access,
-    accessExpires: Date.now() / 1000 + data.access_expires,
+    access,
+    accessExpires: Date.now() / 1000 + (accessExpires as number),
     refresh: data.refresh,
     refreshExpires: Date.now() / 1000 + data.refresh_expires,
   }
