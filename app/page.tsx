@@ -89,6 +89,10 @@ export default function Thrift() {
 
   const [allMonths, setAllMonths] = useState<string[]>([])
   const [allMonthsData, setAllMonthsData] = useState<MonthData[]>([])
+  // Période d'export : un mois, une plage, ou tout. Bornes vides = mois affiché.
+  const [exportMode, setExportMode] = useState<"mois" | "plage" | "tout">("mois")
+  const [exportFromInput, setExportFrom] = useState("")
+  const [exportToInput, setExportTo] = useState("")
 
   // Mois affiché
   const [month, setMonth] = useState("")
@@ -1115,13 +1119,20 @@ export default function Thrift() {
   // 11. Export
   // ==========================================
   function exportCsv() {
-    const csv = toCsv(allMonthsData, categories)
+    const range =
+      exportMode === "mois"
+        ? { from: exportFrom, to: exportFrom }
+        : exportMode === "plage"
+          ? { from: exportFrom <= exportTo ? exportFrom : exportTo, to: exportFrom <= exportTo ? exportTo : exportFrom }
+          : {}
+    const csv = toCsv(allMonthsData, categories, range)
+    const period = range.from ? (range.from === range.to ? range.from : `${range.from}_${range.to}`) : "tout"
     // Le BOM force Excel à lire l'UTF-8 : sans lui les accents sont cassés.
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })
     const url = URL.createObjectURL(blob)
     const a = document.createElement("a")
     a.href = url
-    a.download = `thrift-${currentUser}-${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `thrift-${currentUser}-${period}.csv`
     a.click()
     URL.revokeObjectURL(url)
     toast({ title: "Export téléchargé" })
@@ -1200,6 +1211,8 @@ export default function Thrift() {
         fixedExpenses: [],
       })
     : null
+  const exportFrom = exportFromInput || month
+  const exportTo = exportToInput || month
   const settlement = currentHouseholdMonth ? settle(currentHouseholdMonth, memberNames) : null
   const sharedTotal = currentHouseholdMonth ? householdTotal(currentHouseholdMonth) : 0
   const sharedSpend = currentHouseholdMonth ? sharedSpendByCategory(currentHouseholdMonth) : {}
@@ -1843,8 +1856,47 @@ export default function Thrift() {
             <Panel>
               <SectionTitle>Export</SectionTitle>
               <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
-                Toutes tes dépenses, tous les mois, dans un tableur.
+                Revenus, charges fixes et dépenses de la période, avec les totaux en bas, dans un tableur.
               </p>
+              <div className="mb-3 space-y-3">
+                <select
+                  value={exportMode}
+                  onChange={(e) => setExportMode(e.target.value as typeof exportMode)}
+                  className={`${FIELD} appearance-none`}
+                  style={FIELD_STYLE}
+                  aria-label="Période à exporter"
+                >
+                  <option value="mois">Un mois</option>
+                  <option value="plage">Plusieurs mois</option>
+                  <option value="tout">Tous les mois</option>
+                </select>
+                {exportMode !== "tout" && (
+                  <div className="flex gap-3">
+                    {(exportMode === "mois" ? (["from"] as const) : (["from", "to"] as const)).map((bound) => (
+                      <label key={bound} className="min-w-0 flex-1">
+                        {exportMode === "plage" && (
+                          <span className={LABEL} style={LABEL_STYLE}>
+                            {bound === "from" ? "Du" : "Au"}
+                          </span>
+                        )}
+                        <select
+                          value={bound === "from" ? exportFrom : exportTo}
+                          onChange={(e) => (bound === "from" ? setExportFrom : setExportTo)(e.target.value)}
+                          className={`${FIELD} appearance-none`}
+                          style={FIELD_STYLE}
+                          aria-label={exportMode === "mois" ? "Mois à exporter" : bound === "from" ? "Premier mois" : "Dernier mois"}
+                        >
+                          {allMonths.map((m) => (
+                            <option key={m} value={m}>
+                              {monthLabel(m)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={exportCsv}

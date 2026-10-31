@@ -338,32 +338,48 @@ describe("historique et export", () => {
 
   test("le CSV échappe les points-virgules et les guillemets", () => {
     const csv = toCsv(
-      [month("2026-10", 2000, [expense(12.5, "alimentation", "2026-10-02", 'Courses; "bio"')])],
+      [month("2026-10", 0, [expense(12.5, "alimentation", "2026-10-02", 'Courses; "bio"')])],
       DEFAULT_CATEGORIES
     )
     const ligne = csv.split("\r\n")[1]
-    assert.equal(ligne, '2026-10;2026-10-02;Alimentation;"Courses; ""bio""";12.50')
-    assert.equal(ligne.split(";").length > 5, true, "le point-virgule interne reste dans le champ cité")
+    assert.equal(ligne, '2026-10;2026-10-02;Dépense;Alimentation;"Courses; ""bio""";12.50')
+    assert.equal(ligne.split(";").length > 6, true, "le point-virgule interne reste dans le champ cité")
   })
 
-  test("le CSV ajoute les charges fixes du mois d'extraction, et seulement celles-là", () => {
-    const csv = toCsv(
-      [
-        month("2026-09", 2000, [expense(20, "loisirs", "2026-09-10")], 750),
-        month("2026-10", 2000, [expense(12.5, "alimentation", "2026-10-02")], 800),
-      ],
-      DEFAULT_CATEGORIES,
-      new Date(2026, 9, 31)
-    )
-    const lignes = csv.split("\r\n").slice(1)
+  const deuxMois = () => [
+    month("2026-09", 2000, [expense(20, "loisirs", "2026-09-10")], 750),
+    {
+      ...month("2026-10", 2000, [expense(12.5, "alimentation", "2026-10-02")], 800),
+      extraIncomes: [{ id: "i", amount: 100, description: "Prime" }],
+    },
+  ]
+
+  test("chaque mois donne ses revenus, ses charges fixes et ses dépenses, puis les totaux", () => {
+    const lignes = toCsv(deuxMois(), DEFAULT_CATEGORIES).split("\r\n").slice(1)
     assert.deepEqual(lignes, [
-      "2026-09;2026-09-10;Loisirs;x;20.00",
-      "2026-10;2026-10-02;Alimentation;x;12.50",
-      "2026-10;;Charge fixe;Loyer;800.00",
+      "2026-09;;Revenu;;Salaire;2000.00",
+      "2026-09;;Charge fixe;;Loyer;750.00",
+      "2026-09;2026-09-10;Dépense;Loisirs;x;20.00",
+      "2026-10;;Revenu;;Salaire;2000.00",
+      "2026-10;;Revenu;;Prime;100.00",
+      "2026-10;;Charge fixe;;Loyer;800.00",
+      "2026-10;2026-10-02;Dépense;Alimentation;x;12.50",
+      "",
+      ";;Total;;Revenus;4100.00",
+      ";;Total;;Charges fixes;1550.00",
+      ";;Total;;Dépenses variables;32.50",
+      ";;Total;;Dépenses (fixes + variables);1582.50",
+      ";;Total;;Solde (revenus − dépenses);2517.50",
     ])
   })
 
+  test("une période ne garde que ses mois, et ses totaux ne comptent qu'eux", () => {
+    const lignes = toCsv(deuxMois(), DEFAULT_CATEGORIES, { from: "2026-09", to: "2026-09" }).split("\r\n")
+    assert.equal(lignes.some((l) => l.startsWith("2026-10")), false)
+    assert.equal(lignes.at(-1), ";;Total;;Solde (revenus − dépenses);1230.00")
+  })
+
   test("l'en-tête du CSV est stable", () => {
-    assert.equal(toCsv([], DEFAULT_CATEGORIES).split("\r\n")[0], "mois;date;categorie;description;montant")
+    assert.equal(toCsv([], DEFAULT_CATEGORIES).split("\r\n")[0], "mois;date;type;categorie;description;montant")
   })
 })

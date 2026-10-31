@@ -473,31 +473,61 @@ export function buildProjection(input: {
 }
 
 // === Export ===
+/** Bornes incluses, au format "YYYY-MM". Une borne absente ne filtre pas. */
+export type ExportRange = { from?: string; to?: string }
+
 /**
- * Une ligne par dépense, toutes périodes confondues, plus les charges fixes du
- * mois d'extraction (sans date : elles valent pour tout le mois). Séparateur ';'
- * pour Excel FR.
+ * Pour chaque mois de la période : ses revenus, ses charges fixes (sans date :
+ * elles valent pour tout le mois) puis ses dépenses variables. Le fichier se
+ * termine par les totaux de la période, pour ne rien avoir à recalculer dans
+ * le tableur. Séparateur ';' pour Excel FR.
  */
-export function toCsv(months: MonthData[], categories: Category[], now: Date = new Date()): string {
+export function toCsv(months: MonthData[], categories: Category[], range: ExportRange = {}): string {
   const label = (id: string) => categories.find((c) => c.id === id)?.name ?? id
   const escape = (v: string) => (/[";\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
-  const exportMonth = currentMonthKey(now)
+  const money = (v: number) => v.toFixed(2)
 
-  const rows = [["mois", "date", "categorie", "description", "montant"]]
-  ;[...months]
+  const selected = [...months]
+    .filter((m) => (!range.from || m.month >= range.from) && (!range.to || m.month <= range.to))
     .sort((a, b) => a.month.localeCompare(b.month))
-    .forEach((m) => {
-      ;[...m.expenses]
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .forEach((e) => {
-          rows.push([m.month, e.date, label(e.category), e.description, e.amount.toFixed(2)])
-        })
-      if (m.month === exportMonth) {
-        m.fixedExpenses.forEach((f) => {
-          rows.push([m.month, "", "Charge fixe", f.description, f.amount.toFixed(2)])
-        })
-      }
+
+  let income = 0
+  let fixed = 0
+  let variable = 0
+  const rows = [["mois", "date", "type", "categorie", "description", "montant"]]
+  selected.forEach((m) => {
+    if (m.salary > 0) rows.push([m.month, "", "Revenu", "", "Salaire", money(m.salary)])
+    ;(m.extraIncomes ?? []).forEach((i) => {
+      rows.push([m.month, "", "Revenu", "", i.description, money(i.amount)])
     })
+    m.fixedExpenses.forEach((f) => {
+      rows.push([m.month, "", "Charge fixe", "", f.description, money(f.amount)])
+    })
+    ;[...m.expenses]
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((e) => {
+        rows.push([m.month, e.date, "Dépense", label(e.category), e.description, money(e.amount)])
+      })
+
+    const totals = computeTotals({
+      salary: m.salary,
+      expenses: m.expenses,
+      fixedExpenses: m.fixedExpenses,
+      extraIncomes: m.extraIncomes ?? [],
+    })
+    income += totals.totalIncome
+    fixed += totals.totalFixed
+    variable += totals.totalExpenses
+  })
+
+  rows.push(
+    [],
+    ["", "", "Total", "", "Revenus", money(income)],
+    ["", "", "Total", "", "Charges fixes", money(fixed)],
+    ["", "", "Total", "", "Dépenses variables", money(variable)],
+    ["", "", "Total", "", "Dépenses (fixes + variables)", money(fixed + variable)],
+    ["", "", "Total", "", "Solde (revenus − dépenses)", money(income - fixed - variable)]
+  )
 
   return rows.map((r) => r.map((cell) => escape(String(cell))).join(";")).join("\r\n")
 }
