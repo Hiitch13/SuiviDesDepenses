@@ -130,8 +130,10 @@ export type MonthTotals = {
   totalFixed: number
   totalExtraIncome: number
   totalIncome: number
+  /** Ce que l'on a payé soi-même pour le foyer ce mois-ci. */
+  totalShared: number
   totalOut: number
-  /** Ce qu'il reste à vivre : revenus − (charges fixes + dépenses variables). */
+  /** Ce qu'il reste à vivre : revenus − (charges fixes + dépenses variables + dépenses payées pour le foyer). */
   balance: number
   /** Part des revenus déjà consommée, bornée à 100. */
   spentShare: number
@@ -142,17 +144,21 @@ export function computeTotals(input: {
   expenses: Expense[]
   fixedExpenses: FixedExpense[]
   extraIncomes: IncomeEntry[]
+  /** Dépenses du foyer payées de sa poche : elles sortent du même compte. */
+  sharedPaid?: number
 }): MonthTotals {
   const totalExpenses = input.expenses.reduce((sum, e) => sum + e.amount, 0)
   const totalFixed = input.fixedExpenses.reduce((sum, e) => sum + e.amount, 0)
   const totalExtraIncome = input.extraIncomes.reduce((sum, i) => sum + i.amount, 0)
   const totalIncome = input.salary + totalExtraIncome
-  const totalOut = totalExpenses + totalFixed
+  const totalShared = input.sharedPaid ?? 0
+  const totalOut = totalExpenses + totalFixed + totalShared
   return {
     totalExpenses,
     totalFixed,
     totalExtraIncome,
     totalIncome,
+    totalShared,
     totalOut,
     balance: totalIncome - totalOut,
     spentShare: totalIncome > 0 ? Math.min(100, (totalOut / totalIncome) * 100) : 0,
@@ -467,10 +473,15 @@ export function buildProjection(input: {
 }
 
 // === Export ===
-/** Une ligne par dépense, toutes périodes confondues. Séparateur ';' pour Excel FR. */
-export function toCsv(months: MonthData[], categories: Category[]): string {
+/**
+ * Une ligne par dépense, toutes périodes confondues, plus les charges fixes du
+ * mois d'extraction (sans date : elles valent pour tout le mois). Séparateur ';'
+ * pour Excel FR.
+ */
+export function toCsv(months: MonthData[], categories: Category[], now: Date = new Date()): string {
   const label = (id: string) => categories.find((c) => c.id === id)?.name ?? id
   const escape = (v: string) => (/[";\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+  const exportMonth = currentMonthKey(now)
 
   const rows = [["mois", "date", "categorie", "description", "montant"]]
   ;[...months]
@@ -481,6 +492,11 @@ export function toCsv(months: MonthData[], categories: Category[]): string {
         .forEach((e) => {
           rows.push([m.month, e.date, label(e.category), e.description, e.amount.toFixed(2)])
         })
+      if (m.month === exportMonth) {
+        m.fixedExpenses.forEach((f) => {
+          rows.push([m.month, "", "Charge fixe", f.description, f.amount.toFixed(2)])
+        })
+      }
     })
 
   return rows.map((r) => r.map((cell) => escape(String(cell))).join(";")).join("\r\n")

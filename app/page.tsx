@@ -52,6 +52,7 @@ import {
   type Invite,
   type SharedExpense,
   householdTotal,
+  paidByMember,
   settle,
   sharedSpendByCategory,
 } from "@/lib/household"
@@ -1129,11 +1130,17 @@ export default function Thrift() {
   // ==========================================
   // 12. Dérivés
   // ==========================================
+  // Ce que l'on a payé pour le foyer ce mois-ci sort du même compte que le reste.
+  const sharedPaid =
+    household && currentUser
+      ? paidByMember(householdMonths.find((m) => m.month === month) ?? null, currentUser)
+      : 0
   const totals = computeTotals({
     salary: parseFloat(salary) || 0,
     expenses,
     fixedExpenses,
     extraIncomes,
+    sharedPaid,
   })
   const spend = spendByCategory(expenses, categories)
   const overBudget = overBudgetCategories(categories, spend, categoryBudgets)
@@ -1594,6 +1601,23 @@ export default function Thrift() {
                     </button>
                   </div>
                 </Panel>
+
+                {household && totals.totalShared > 0 && (
+                  <Panel>
+                    <SectionTitle aside={euros(totals.totalShared)}>Payé pour {household.name}</SectionTitle>
+                    <p className="text-sm" style={{ color: "var(--t-sage)" }}>
+                      Dépenses et charges du foyer que tu as réglées ce mois-ci, déduites de ton reste à vivre.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setView("foyer")}
+                      className="mt-2 text-sm font-medium"
+                      style={{ color: "var(--t-brass)" }}
+                    >
+                      Voir le foyer
+                    </button>
+                  </Panel>
+                )}
 
                 <Panel>
                   <SectionTitle aside={euros(totals.totalIncome)}>Revenus</SectionTitle>

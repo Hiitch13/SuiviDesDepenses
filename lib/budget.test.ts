@@ -59,6 +59,25 @@ describe("soldes du mois", () => {
     assert.equal(t.balance, -400)
   })
 
+  test("ce que l'on a payé pour le foyer est déduit du reste à vivre", () => {
+    const t = computeTotals({
+      salary: 2000,
+      expenses: [expense(50, "alimentation", "2026-10-02")],
+      fixedExpenses: [{ id: "f", amount: 800, description: "Loyer" }],
+      extraIncomes: [],
+      sharedPaid: 120,
+    })
+    assert.equal(t.totalShared, 120)
+    assert.equal(t.totalOut, 970)
+    assert.equal(t.balance, 1030)
+  })
+
+  test("sans foyer, rien n'est déduit", () => {
+    const t = computeTotals({ salary: 1000, expenses: [], fixedExpenses: [], extraIncomes: [] })
+    assert.equal(t.totalShared, 0)
+    assert.equal(t.balance, 1000)
+  })
+
   test("sans revenu, la part consommée vaut zéro plutôt que l'infini", () => {
     const t = computeTotals({ salary: 0, expenses: [], fixedExpenses: [], extraIncomes: [] })
     assert.equal(t.spentShare, 0)
@@ -325,6 +344,23 @@ describe("historique et export", () => {
     const ligne = csv.split("\r\n")[1]
     assert.equal(ligne, '2026-10;2026-10-02;Alimentation;"Courses; ""bio""";12.50')
     assert.equal(ligne.split(";").length > 5, true, "le point-virgule interne reste dans le champ cité")
+  })
+
+  test("le CSV ajoute les charges fixes du mois d'extraction, et seulement celles-là", () => {
+    const csv = toCsv(
+      [
+        month("2026-09", 2000, [expense(20, "loisirs", "2026-09-10")], 750),
+        month("2026-10", 2000, [expense(12.5, "alimentation", "2026-10-02")], 800),
+      ],
+      DEFAULT_CATEGORIES,
+      new Date(2026, 9, 31)
+    )
+    const lignes = csv.split("\r\n").slice(1)
+    assert.deepEqual(lignes, [
+      "2026-09;2026-09-10;Loisirs;x;20.00",
+      "2026-10;2026-10-02;Alimentation;x;12.50",
+      "2026-10;;Charge fixe;Loyer;800.00",
+    ])
   })
 
   test("l'en-tête du CSV est stable", () => {
