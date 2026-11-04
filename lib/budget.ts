@@ -199,8 +199,9 @@ export function daysLeftInMonth(month: string, now: Date = new Date()): number |
  * Jours restants jusqu'au prochain jour de paie, aujourd'hui inclus.
  *
  * Le jour de paie est ramené au dernier jour du mois s'il le dépasse (un « 31 »
- * en février devient le 28/29). S'il est déjà passé ce mois-ci, on compte jusqu'à
- * la paie du mois suivant : c'est la date à laquelle l'argent doit suffire.
+ * en février devient le 28/29). S'il est passé ou tombe aujourd'hui (la paie est
+ * alors reçue), on compte jusqu'à la paie du mois suivant : c'est la date à
+ * laquelle l'argent doit suffire.
  */
 export function daysUntilPayday(payDay: number, now: Date = new Date()): number {
   const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate()
@@ -208,7 +209,7 @@ export function daysUntilPayday(payDay: number, now: Date = new Date()): number 
 
   const thisMonthDay = Math.min(payDay, daysInMonth(now.getFullYear(), now.getMonth()))
   let target = new Date(now.getFullYear(), now.getMonth(), thisMonthDay)
-  if (target < today) {
+  if (target <= today) {
     const next = new Date(now.getFullYear(), now.getMonth() + 1, 1)
     const nextMonthDay = Math.min(payDay, daysInMonth(next.getFullYear(), next.getMonth()))
     target = new Date(next.getFullYear(), next.getMonth(), nextMonthDay)

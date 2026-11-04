@@ -145,6 +145,15 @@ describe("jour de paie", () => {
     assert.equal(daysUntilPayday(5, dans(27)), 10)
   })
 
+  test("le jour même de la paie, elle est reçue : on compte jusqu'à la suivante", () => {
+    // Paie le 4 : le 4 novembre, la prochaine tombe le 4 décembre.
+    assert.equal(daysUntilPayday(4, new Date(2026, 10, 4)), 31)
+  })
+
+  test("la veille de la paie, elle reste à venir", () => {
+    assert.equal(daysUntilPayday(4, new Date(2026, 10, 3)), 2)
+  })
+
   test("un jour de paie au-delà du mois est ramené au dernier jour", () => {
     // « 31 » en février 2026 (28 jours) devient le 28.
     assert.equal(daysUntilPayday(31, new Date(2026, 1, 10)), 19)
