@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, test } from "node:test"
 
-import { type HouseholdMonth, householdTotal, settle, sharedSpendByCategory } from "./household.ts"
+import { type HouseholdMonth, householdTotal, paidByMember, settle, sharedSpendByCategory } from "./household.ts"
 
 const mois = (
   expenses: { amount: number; paidBy: string; category?: string }[],
@@ -137,5 +137,17 @@ describe("totaux du foyer", () => {
       )
     )
     assert.deepEqual(r, { alimentation: 80, transport: 15 })
+  })
+})
+
+describe("dépenses du foyer dans le budget perso", () => {
+  test("on compte ce que l'on a payé soi-même, dépenses et charges fixes", () => {
+    const m = mois(
+      [{ amount: 40, paidBy: "Ali" }, { amount: 25, paidBy: "Estelle" }],
+      [{ amount: 780, paidBy: "Ali" }]
+    )
+    assert.equal(paidByMember(m, "Ali"), 820)
+    assert.equal(paidByMember(m, "Estelle"), 25)
+    assert.equal(paidByMember(null, "Ali"), 0)
   })
 })

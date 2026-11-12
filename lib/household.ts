@@ -154,6 +154,15 @@ export function householdTotal(month: HouseholdMonth): number {
   )
 }
 
+/** Ce qu'un membre a sorti de sa poche pour le foyer sur un mois, charges fixes comprises. */
+export function paidByMember(month: HouseholdMonth | null, username: string): number {
+  if (!month) return 0
+  return round(
+    month.expenses.filter((e) => e.paidBy === username).reduce((s, e) => s + e.amount, 0) +
+      month.fixedExpenses.filter((f) => f.paidBy === username).reduce((s, f) => s + f.amount, 0)
+  )
+}
+
 /** Répartition par catégorie, pour les barres classées. */
 export function sharedSpendByCategory(month: HouseholdMonth): Record<string, number> {
   const out: Record<string, number> = {}

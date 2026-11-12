@@ -66,6 +66,25 @@ describe("soldes du mois", () => {
     assert.equal(t.balance, -400)
   })
 
+  test("ce que l'on a payé pour le foyer est déduit du reste à vivre", () => {
+    const t = computeTotals({
+      salary: 2000,
+      expenses: [expense(50, "alimentation", "2026-10-02")],
+      fixedExpenses: [{ id: "f", amount: 800, description: "Loyer" }],
+      extraIncomes: [],
+      sharedPaid: 120,
+    })
+    assert.equal(t.totalShared, 120)
+    assert.equal(t.totalOut, 970)
+    assert.equal(t.balance, 1030)
+  })
+
+  test("sans foyer, rien n'est déduit", () => {
+    const t = computeTotals({ salary: 1000, expenses: [], fixedExpenses: [], extraIncomes: [] })
+    assert.equal(t.totalShared, 0)
+    assert.equal(t.balance, 1000)
+  })
+
   test("sans revenu, la part consommée vaut zéro plutôt que l'infini", () => {
     const t = computeTotals({ salary: 0, expenses: [], fixedExpenses: [], extraIncomes: [] })
     assert.equal(t.spentShare, 0)
@@ -135,6 +154,15 @@ describe("jour de paie", () => {
   test("une fois le jour de paie passé, on compte jusqu'au mois suivant", () => {
     // Paie le 5 : depuis le 27, la prochaine paie tombe le 5 novembre.
     assert.equal(daysUntilPayday(5, dans(27)), 10)
+  })
+
+  test("le jour même de la paie, elle est reçue : on compte jusqu'à la suivante", () => {
+    // Paie le 4 : le 4 novembre, la prochaine tombe le 4 décembre.
+    assert.equal(daysUntilPayday(4, new Date(2026, 10, 4)), 31)
+  })
+
+  test("la veille de la paie, elle reste à venir", () => {
+    assert.equal(daysUntilPayday(4, new Date(2026, 10, 3)), 2)
   })
 
   test("un jour de paie au-delà du mois est ramené au dernier jour", () => {
@@ -492,23 +520,74 @@ describe("historique et export", () => {
 
   test("le CSV échappe les points-virgules et les guillemets", () => {
     const csv = toCsv(
-      [month("2026-10", 2000, [expense(12.5, "alimentation", "2026-10-02", 'Courses; "bio"')])],
+      [month("2026-10", 0, [expense(12.5, "alimentation", "2026-10-02", 'Courses; "bio"')])],
       DEFAULT_CATEGORIES
     )
     const ligne = csv.split("\r\n")[1]
-    assert.equal(ligne, '2026-10;2026-10-02;Alimentation;"Courses; ""bio""";12.50')
-    assert.equal(ligne.split(";").length > 5, true, "le point-virgule interne reste dans le champ cité")
+    assert.equal(ligne, '2026-10;2026-10-02;Dépense;Alimentation;"Courses; ""bio""";12.50')
+    assert.equal(ligne.split(";").length > 6, true, "le point-virgule interne reste dans le champ cité")
   })
 
-  test("le CSV inclut les mouvements d'épargne, montant signé", () => {
-    const csv = toCsv([], DEFAULT_CATEGORIES, [move("retrait", 80, "2026-10-12", "Pioche"), move("versement", 300, "2026-10-02")])
-    assert.deepEqual(csv.split("\r\n").slice(1), [
-      "2026-10;2026-10-02;Épargne · versement;;300.00",
-      "2026-10;2026-10-12;Épargne · retrait;Pioche;-80.00",
+  const deuxMois = () => [
+    month("2026-09", 2000, [expense(20, "loisirs", "2026-09-10")], 750),
+    {
+      ...month("2026-10", 2000, [expense(12.5, "alimentation", "2026-10-02")], 800),
+      extraIncomes: [{ id: "i", amount: 100, description: "Prime" }],
+    },
+  ]
+
+  test("chaque mois donne ses revenus, ses charges fixes et ses dépenses, puis les totaux", () => {
+    const lignes = toCsv(deuxMois(), DEFAULT_CATEGORIES).split("\r\n").slice(1)
+    assert.deepEqual(lignes, [
+      "2026-09;;Revenu;;Salaire;2000.00",
+      "2026-09;;Charge fixe;;Loyer;750.00",
+      "2026-09;2026-09-10;Dépense;Loisirs;x;20.00",
+      "2026-10;;Revenu;;Salaire;2000.00",
+      "2026-10;;Revenu;;Prime;100.00",
+      "2026-10;;Charge fixe;;Loyer;800.00",
+      "2026-10;2026-10-02;Dépense;Alimentation;x;12.50",
+      "",
+      ";;Total;;Revenus;4100.00",
+      ";;Total;;Charges fixes;1550.00",
+      ";;Total;;Dépenses variables;32.50",
+      ";;Total;;Dépenses (fixes + variables);1582.50",
+      ";;Total;;Solde (revenus − dépenses);2517.50",
+      ";;Total;;Épargne nette (versements − retraits);0.00",
+      ";;Total;;Reste (solde − épargne nette);2517.50",
     ])
   })
 
+  test("une période ne garde que ses mois, et ses totaux ne comptent qu'eux", () => {
+    const lignes = toCsv(deuxMois(), DEFAULT_CATEGORIES, { from: "2026-09", to: "2026-09" }).split("\r\n")
+    assert.equal(lignes.some((l) => l.startsWith("2026-10")), false)
+    assert.equal(lignes.at(-3), ";;Total;;Solde (revenus − dépenses);1230.00")
+  })
+
+  test("le CSV range les mouvements d'épargne dans leur mois, montant signé, et les totalise", () => {
+    const moves = [
+      move("retrait", 80, "2026-10-12", "Pioche"),
+      move("versement", 300, "2026-10-02"),
+      move("ajustement", 15, "2026-10-31", "Recalage"),
+      move("versement", 50, "2026-11-03"), // hors période
+    ]
+    const lignes = toCsv(deuxMois(), DEFAULT_CATEGORIES, { to: "2026-10" }, moves).split("\r\n")
+    const octobre = lignes.filter((l) => l.startsWith("2026-10"))
+    assert.deepEqual(octobre.slice(-3), [
+      "2026-10;2026-10-02;Épargne;Versement;;300.00",
+      "2026-10;2026-10-12;Épargne;Retrait;Pioche;-80.00",
+      "2026-10;2026-10-31;Épargne;Recalage;Recalage;15.00",
+    ])
+    assert.equal(lignes.some((l) => l.startsWith("2026-11")), false)
+    assert.equal(lignes.at(-2), ";;Total;;Épargne nette (versements − retraits);220.00")
+    assert.equal(lignes.at(-1), ";;Total;;Reste (solde − épargne nette);2297.50")
+  })
+
+  test("un mouvement dans un mois jamais ouvert apparaît quand même", () => {
+    const lignes = toCsv([], DEFAULT_CATEGORIES, {}, [move("versement", 10, "2026-07-01")]).split("\r\n")
+    assert.equal(lignes[1], "2026-07;2026-07-01;Épargne;Versement;;10.00")
+  })
+
   test("l'en-tête du CSV est stable", () => {
-    assert.equal(toCsv([], DEFAULT_CATEGORIES).split("\r\n")[0], "mois;date;categorie;description;montant")
+    assert.equal(toCsv([], DEFAULT_CATEGORIES).split("\r\n")[0], "mois;date;type;categorie;description;montant")
   })
 })

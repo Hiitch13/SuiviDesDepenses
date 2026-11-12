@@ -147,10 +147,15 @@ export type MonthTotals = {
   totalFixed: number
   totalExtraIncome: number
   totalIncome: number
+  /** Ce que l'on a payé soi-même pour le foyer ce mois-ci. */
+  totalShared: number
   totalOut: number
   /** Épargne nette du mois : versements − retraits. Négative si l'on a plus pioché que versé. */
   savingsNet: number
-  /** Ce qu'il reste à vivre : revenus − (charges fixes + dépenses variables + épargne nette). */
+  /**
+   * Ce qu'il reste à vivre : revenus − (charges fixes + dépenses variables +
+   * dépenses payées pour le foyer + épargne nette).
+   */
   balance: number
   /** Part des revenus déjà consommée ou mise de côté, bornée à 100. */
   spentShare: number
@@ -161,13 +166,16 @@ export function computeTotals(input: {
   expenses: Expense[]
   fixedExpenses: FixedExpense[]
   extraIncomes: IncomeEntry[]
+  /** Dépenses du foyer payées de sa poche : elles sortent du même compte. */
+  sharedPaid?: number
   savings?: SavingsFlow
 }): MonthTotals {
   const totalExpenses = input.expenses.reduce((sum, e) => sum + e.amount, 0)
   const totalFixed = input.fixedExpenses.reduce((sum, e) => sum + e.amount, 0)
   const totalExtraIncome = input.extraIncomes.reduce((sum, i) => sum + i.amount, 0)
   const totalIncome = input.salary + totalExtraIncome
-  const totalOut = totalExpenses + totalFixed
+  const totalShared = input.sharedPaid ?? 0
+  const totalOut = totalExpenses + totalFixed + totalShared
   const savingsNet = input.savings?.net ?? 0
   const consumed = totalOut + savingsNet
   return {
@@ -175,6 +183,7 @@ export function computeTotals(input: {
     totalFixed,
     totalExtraIncome,
     totalIncome,
+    totalShared,
     totalOut,
     savingsNet,
     balance: totalIncome - consumed,
@@ -215,8 +224,9 @@ export function daysLeftInMonth(month: string, now: Date = new Date()): number |
  * Jours restants jusqu'au prochain jour de paie, aujourd'hui inclus.
  *
  * Le jour de paie est ramené au dernier jour du mois s'il le dépasse (un « 31 »
- * en février devient le 28/29). S'il est déjà passé ce mois-ci, on compte jusqu'à
- * la paie du mois suivant : c'est la date à laquelle l'argent doit suffire.
+ * en février devient le 28/29). S'il est passé ou tombe aujourd'hui (la paie est
+ * alors reçue), on compte jusqu'à la paie du mois suivant : c'est la date à
+ * laquelle l'argent doit suffire.
  */
 export function daysUntilPayday(payDay: number, now: Date = new Date()): number {
   const daysInMonth = (y: number, m: number) => new Date(y, m + 1, 0).getDate()
@@ -224,7 +234,7 @@ export function daysUntilPayday(payDay: number, now: Date = new Date()): number 
 
   const thisMonthDay = Math.min(payDay, daysInMonth(now.getFullYear(), now.getMonth()))
   let target = new Date(now.getFullYear(), now.getMonth(), thisMonthDay)
-  if (target < today) {
+  if (target <= today) {
     const next = new Date(now.getFullYear(), now.getMonth() + 1, 1)
     const nextMonthDay = Math.min(payDay, daysInMonth(next.getFullYear(), next.getMonth()))
     target = new Date(next.getFullYear(), next.getMonth(), nextMonthDay)
@@ -600,38 +610,90 @@ export function migrateLegacySavings(input: {
 }
 
 // === Export ===
+/** Bornes incluses, au format "YYYY-MM". Une borne absente ne filtre pas. */
+export type ExportRange = { from?: string; to?: string }
+
 const MOVE_LABELS: Record<SavingsMoveKind, string> = {
-  versement: "versement",
-  retrait: "retrait",
-  ajustement: "recalage",
+  versement: "Versement",
+  retrait: "Retrait",
+  ajustement: "Recalage",
 }
 
 /**
- * Une ligne par dépense et par mouvement d'épargne, toutes périodes confondues.
- * Séparateur ';' pour Excel FR. Les mouvements portent un montant signé.
+ * Pour chaque mois de la période : ses revenus, ses charges fixes (sans date :
+ * elles valent pour tout le mois), ses dépenses variables, puis ses mouvements
+ * d'épargne (montant signé). Le fichier se termine par les totaux de la
+ * période, pour ne rien avoir à recalculer dans le tableur. Séparateur ';'
+ * pour Excel FR.
  */
-export function toCsv(months: MonthData[], categories: Category[], moves: SavingsMove[] = []): string {
+export function toCsv(
+  months: MonthData[],
+  categories: Category[],
+  range: ExportRange = {},
+  moves: SavingsMove[] = []
+): string {
   const label = (id: string) => categories.find((c) => c.id === id)?.name ?? id
   const escape = (v: string) => (/[";\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
+  const money = (v: number) => v.toFixed(2)
+  const inRange = (ym: string) => (!range.from || ym >= range.from) && (!range.to || ym <= range.to)
 
-  const lines: { sortKey: string; cells: string[] }[] = []
-  months.forEach((m) => {
-    m.expenses.forEach((e) => {
-      lines.push({
-        sortKey: `${m.month}|${e.date}`,
-        cells: [m.month, e.date, label(e.category), e.description, e.amount.toFixed(2)],
+  const byMonth = new Map(months.filter((m) => inRange(m.month)).map((m) => [m.month, m]))
+  const movesInRange = moves.filter((mv) => inRange(monthOf(mv.date)))
+  // Un mouvement peut tomber dans un mois jamais ouvert : il a quand même sa place.
+  const keys = [...new Set([...byMonth.keys(), ...movesInRange.map((mv) => monthOf(mv.date))])].sort()
+
+  let income = 0
+  let fixed = 0
+  let variable = 0
+  let saved = 0
+  const rows = [["mois", "date", "type", "categorie", "description", "montant"]]
+  keys.forEach((key) => {
+    const m = byMonth.get(key)
+    if (m) {
+      if (m.salary > 0) rows.push([m.month, "", "Revenu", "", "Salaire", money(m.salary)])
+      ;(m.extraIncomes ?? []).forEach((i) => {
+        rows.push([m.month, "", "Revenu", "", i.description, money(i.amount)])
       })
-    })
-  })
-  moves.forEach((mv) => {
-    lines.push({
-      sortKey: `${monthOf(mv.date)}|${mv.date}`,
-      cells: [monthOf(mv.date), mv.date, `Épargne · ${MOVE_LABELS[mv.kind]}`, mv.note, moveDelta(mv).toFixed(2)],
-    })
-  })
-  // Tri stable : à date égale, l'ordre d'insertion est conservé.
-  lines.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
+      m.fixedExpenses.forEach((f) => {
+        rows.push([m.month, "", "Charge fixe", "", f.description, money(f.amount)])
+      })
+      ;[...m.expenses]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .forEach((e) => {
+          rows.push([m.month, e.date, "Dépense", label(e.category), e.description, money(e.amount)])
+        })
 
-  const rows = [["mois", "date", "categorie", "description", "montant"], ...lines.map((l) => l.cells)]
+      const totals = computeTotals({
+        salary: m.salary,
+        expenses: m.expenses,
+        fixedExpenses: m.fixedExpenses,
+        extraIncomes: m.extraIncomes ?? [],
+      })
+      income += totals.totalIncome
+      fixed += totals.totalFixed
+      variable += totals.totalExpenses
+    }
+
+    movesInRange
+      .filter((mv) => monthOf(mv.date) === key)
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .forEach((mv) => {
+        rows.push([key, mv.date, "Épargne", MOVE_LABELS[mv.kind], mv.note, money(moveDelta(mv))])
+      })
+    saved += savingsFlow(movesInRange, key).net
+  })
+  saved = round2(saved)
+
+  rows.push(
+    [],
+    ["", "", "Total", "", "Revenus", money(income)],
+    ["", "", "Total", "", "Charges fixes", money(fixed)],
+    ["", "", "Total", "", "Dépenses variables", money(variable)],
+    ["", "", "Total", "", "Dépenses (fixes + variables)", money(fixed + variable)],
+    ["", "", "Total", "", "Solde (revenus − dépenses)", money(income - fixed - variable)],
+    ["", "", "Total", "", "Épargne nette (versements − retraits)", money(saved)],
+    ["", "", "Total", "", "Reste (solde − épargne nette)", money(income - fixed - variable - saved)]
+  )
+
   return rows.map((r) => r.map((cell) => escape(String(cell))).join(";")).join("\r\n")
 }
