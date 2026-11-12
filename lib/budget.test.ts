@@ -421,7 +421,26 @@ describe("projection d'épargne", () => {
   test("sans mouvement, la projection part de zéro au mois courant", () => {
     const p = buildProjection({ moves: [], projects: [], now: maintenant })
     assert.equal(p.currentSavings, 0)
-    assert.deepEqual(p.points, [{ month: "2026-10", solde: 0, projected: false }])
+    assert.deepEqual(p.points, [{ month: "2026-10", solde: 0, projected: false, deducted: [] }])
+  })
+
+  test("chaque point porte les projets déduits ce mois-là, avec leur faisabilité", () => {
+    const p = buildProjection({
+      moves,
+      projects: [projet("p1", 600, "2026-12"), projet("p2", 9000, "2027-01"), projet("p3", 5, "2027-01", false)],
+      now: maintenant,
+    })
+    const dec = p.points.find((x) => x.month === "2026-12")!
+    assert.deepEqual(dec.deducted, [{ id: "p1", name: "p1", amount: 600, feasible: true }])
+    // Le solde du point est celui d'après déduction : avant, il valait 500 + 2 × 200.
+    assert.equal(dec.solde, 300)
+    const jan = p.points.find((x) => x.month === "2027-01")!
+    assert.deepEqual(
+      jan.deducted.map((d) => [d.id, d.feasible]),
+      [["p2", false]],
+      "un projet exclu n'apparaît pas"
+    )
+    assert.deepEqual(p.points.find((x) => x.month === "2026-11")?.deducted, [])
   })
 })
 

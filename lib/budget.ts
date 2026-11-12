@@ -476,7 +476,17 @@ export function recalibration(
 }
 
 // === Projection d'épargne ===
-export type ProjectionPoint = { month: string; solde: number; projected: boolean }
+/** Un projet retiré du solde à son échéance. */
+export type DeductedProject = { id: string; name: string; amount: number; feasible: boolean }
+
+export type ProjectionPoint = {
+  month: string
+  /** Solde en fin de mois, projets du mois déjà déduits. */
+  solde: number
+  projected: boolean
+  /** Projets inclus déduits ce mois-là ; le solde d'avant vaut `solde` + leurs montants. */
+  deducted: DeductedProject[]
+}
 
 export type Projection = {
   points: ProjectionPoint[]
@@ -535,12 +545,15 @@ export function buildProjection(input: { moves: SavingsMove[]; projects: Project
     if (hasMoves) running += row.net + row.adjusted
     else if (isFuture) running += monthlyPace
 
+    const deducted: DeductedProject[] = []
     ;(projectsByMonth.get(cursor) || []).forEach((p) => {
-      feasibility.set(p.id, running >= p.amount)
+      const feasible = running >= p.amount
+      feasibility.set(p.id, feasible)
+      deducted.push({ id: p.id, name: p.name, amount: p.amount, feasible })
       running -= p.amount
     })
 
-    points.push({ month: cursor, solde: round2(running), projected: isFuture && !hasMoves })
+    points.push({ month: cursor, solde: round2(running), projected: isFuture && !hasMoves, deducted })
   }
 
   return {

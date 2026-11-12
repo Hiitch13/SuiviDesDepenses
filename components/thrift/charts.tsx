@@ -3,8 +3,8 @@
 import { useId, useMemo, useState } from "react"
 
 import { useWidth } from "./use-width"
-import { type Category, type CategoryDelta, type MonthPoint, SAVINGS_COLOR } from "@/lib/budget"
-import { euros, eurosRound, monthShort, signedEuros } from "@/lib/format"
+import { type Category, type CategoryDelta, type MonthPoint, type ProjectionPoint, SAVINGS_COLOR } from "@/lib/budget"
+import { euros, eurosRound, monthLabel, monthShort, signedEuros } from "@/lib/format"
 import { Empty } from "./ui"
 
 // =============================================================
@@ -266,16 +266,31 @@ export function EvolutionChart({ history }: { history: MonthPoint[] }) {
 }
 
 // =============================================================
-// Projection d'épargne — une seule série, enregistré puis extrapolé
+// Projection d'épargne — solde réel puis extrapolé, projets en marches
 // =============================================================
 
-export function ProjectionChart({
-  points,
-  currentMonth,
-}: {
-  points: { month: string; solde: number; projected: boolean }[]
-  currentMonth: string
-}) {
+/** Pas « rond » (1, 2 ou 5 × 10^n) pour environ `count` intervalles. */
+function niceStep(range: number, count: number): number {
+  const raw = Math.max(range, 1) / count
+  const mag = Math.pow(10, Math.floor(Math.log10(raw)))
+  const norm = raw / mag
+  return (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 5 ? 5 : 10) * mag
+}
+
+const K = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 })
+
+/** "12,5 k€", "−3 k€", "800 €" : court, pour un axe. */
+function compactEuros(v: number): string {
+  const sign = v < 0 ? "−" : ""
+  const a = Math.abs(v)
+  return a >= 1000 ? `${sign}${K.format(a / 1000)} k€` : `${sign}${Math.round(a)} €`
+}
+
+const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1)
+
+export function ProjectionChart({ points, currentMonth }: { points: ProjectionPoint[]; currentMonth: string }) {
+  const clipId = useId()
+  const [hover, setHover] = useState<number | null>(null)
   const { ref, width } = useWidth<HTMLDivElement>()
 
   if (points.length < 2) {
@@ -286,100 +301,303 @@ export function ProjectionChart({
     )
   }
 
+  const before = (p: ProjectionPoint) => p.solde + p.deducted.reduce((s, d) => s + d.amount, 0)
+  const todayIndex = Math.max(
+    0,
+    points.findIndex((p) => p.month === currentMonth)
+  )
+  const active = hover ?? todayIndex
+  const activePoint = points[active]
+
+  // Une unité SVG = un pixel : le texte des axes garde sa taille réelle.
   const W = Math.max(width, 1)
-  const H = 200
-  const PAD = { top: 18, right: 56, bottom: 26, left: 8 }
+  const H = 250
+  const PAD = { top: 24, right: 54, bottom: 28, left: 8 }
   const plotW = W - PAD.left - PAD.right
   const plotH = H - PAD.top - PAD.bottom
 
-  const values = points.map((p) => p.solde)
-  const rawMax = Math.max(...values, 0)
-  const rawMin = Math.min(...values, 0)
-  const span = rawMax - rawMin || 1
+  const values = points.flatMap((p) => [p.solde, before(p)])
+  const step = niceStep(Math.max(...values, 0) - Math.min(...values, 0), 4)
+  const yMin = Math.floor(Math.min(...values, 0) / step) * step
+  const yMax = Math.ceil(Math.max(...values, 0) / step) * step || step
+  const ticks: number[] = []
+  for (let t = yMin; t <= yMax + step / 2; t += step) ticks.push(Math.round(t))
 
   const x = (i: number) => PAD.left + (i / (points.length - 1)) * plotW
-  const y = (v: number) => PAD.top + plotH - ((v - rawMin) / span) * plotH
+  const y = (v: number) => PAD.top + plotH - ((v - yMin) / (yMax - yMin)) * plotH
 
-  // La partie extrapolée est tracée en pointillés : c'est une hypothèse, pas un relevé.
-  const splitIndex = Math.max(0, points.findIndex((p) => p.projected))
-  const recorded = splitIndex === -1 ? points : points.slice(0, splitIndex + 1)
-  const forecast = splitIndex === -1 ? [] : points.slice(splitIndex === 0 ? 0 : splitIndex)
+  // Sommets du tracé : un projet fait une marche verticale dans son mois, pas
+  // une pente vers le mois suivant. Tout ce qui suit le solde réel d'aujourd'hui
+  // est une hypothèse, tracée en pointillés.
+  const solid: string[] = []
+  const dashed: string[] = []
+  points.forEach((p, i) => {
+    const top = `${x(i)},${y(before(p))}`
+    const bottom = `${x(i)},${y(p.solde)}`
+    if (i < todayIndex) {
+      solid.push(bottom)
+    } else if (i === todayIndex) {
+      solid.push(top)
+      dashed.push(top)
+      if (p.deducted.length > 0) dashed.push(bottom)
+    } else {
+      if (p.deducted.length > 0) dashed.push(top)
+      dashed.push(bottom)
+    }
+  })
 
-  const last = points[points.length - 1]
+  // Repères de dates : chaque janvier (avec l'année) sur une longue période,
+  // un mois sur trois sinon.
+  const longSpan = points.length > 18
+  const xLabels = points
+    .map((p, i) => ({ p, i }))
+    .filter(({ p, i }) => (longSpan ? p.month.endsWith("-01") : i % 3 === 0))
+    .map(({ p, i }) => ({ i, text: longSpan ? p.month.slice(0, 4) : monthShort(p.month) }))
+
+  const milestones = points
+    .map((p, i) => ({ p, i }))
+    .filter(({ p }) => p.deducted.length > 0)
+
   const zeroY = y(0)
-  const showZero = rawMin < 0
+  const todayX = x(todayIndex)
+  const activeBefore = before(activePoint)
 
   return (
     <figure className="m-0">
-      <div ref={ref}>
+      {/* Lecture du mois pointé (aujourd'hui par défaut). */}
+      <div className="mb-2 min-h-[4.25rem]" aria-live="polite">
+        <p className="text-xs" style={{ color: "var(--t-sage)" }}>
+          {capitalize(monthLabel(activePoint.month))} ·{" "}
+          {active === todayIndex ? "aujourd'hui" : activePoint.projected ? "projection" : "réel"}
+        </p>
+        <p
+          className="tnum text-xl font-semibold"
+          style={{ color: activePoint.solde < 0 ? "var(--t-alert)" : "var(--t-paper)" }}
+        >
+          {euros(active === todayIndex ? activeBefore : activePoint.solde)}
+        </p>
+        {activePoint.deducted.map((d) => (
+          <p key={d.id} className="tnum text-xs" style={{ color: d.feasible ? "var(--t-sage)" : "var(--t-alert)" }}>
+            {d.name} −{eurosRound(d.amount)} · {d.feasible ? "finançable" : "hors budget"}
+            {active !== todayIndex && ` · solde avant ${eurosRound(activeBefore)}`}
+          </p>
+        ))}
+      </div>
+
+      <div className="relative" ref={ref}>
         {width === 0 ? (
           <div style={{ height: H }} />
         ) : (
-      <svg
-        viewBox={`0 0 ${W} ${H}`}
-        width={W}
-        height={H}
-        className="block"
-        role="img"
-        aria-label={`Projection du solde d'épargne, de ${points[0].month} à ${last.month}.`}
-      >
-        {showZero ? (
-          <line x1={PAD.left} x2={PAD.left + plotW} y1={zeroY} y2={zeroY} stroke="var(--t-alert)" strokeWidth={1} />
-        ) : null}
+          <svg
+            viewBox={`0 0 ${W} ${H}`}
+            width={W}
+            height={H}
+            className="block touch-none"
+            role="img"
+            aria-label={`Projection du solde d'épargne de ${monthLabel(points[0].month)} à ${monthLabel(
+              points[points.length - 1].month
+            )}, ${eurosRound(points[points.length - 1].solde)} à la fin.`}
+            onPointerLeave={() => setHover(null)}
+            onPointerMove={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect()
+              const px = ((e.clientX - rect.left) / rect.width) * W
+              const i = Math.round(((px - PAD.left) / plotW) * (points.length - 1))
+              setHover(Math.max(0, Math.min(points.length - 1, i)))
+            }}
+          >
+            <defs>
+              <clipPath id={clipId}>
+                <rect x={PAD.left - 4} y={PAD.top - 4} width={plotW + 8} height={plotH + 8} />
+              </clipPath>
+            </defs>
 
-        <polyline
-          points={recorded.map((p, i) => `${x(i)},${y(p.solde)}`).join(" ")}
-          fill="none"
-          stroke="var(--t-brass)"
-          strokeWidth={2}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {forecast.length > 1 ? (
-          <polyline
-            points={forecast
-              .map((p) => `${x(points.indexOf(p))},${y(p.solde)}`)
-              .join(" ")}
-            fill="none"
-            stroke="var(--t-brass)"
-            strokeWidth={2}
-            strokeDasharray="2 5"
-            strokeLinecap="round"
-            opacity={0.75}
-          />
-        ) : null}
+            {/* Sous zéro : une teinte d'alerte, pour que le découvert se voie d'un coup d'œil. */}
+            {yMin < 0 ? (
+              <rect
+                x={PAD.left}
+                y={zeroY}
+                width={plotW}
+                height={PAD.top + plotH - zeroY}
+                fill="var(--t-alert)"
+                opacity={0.08}
+              />
+            ) : null}
 
-        <circle
-          cx={x(points.length - 1)}
-          cy={y(last.solde)}
-          r={4.5}
-          fill="var(--t-brass)"
-          stroke="var(--t-pine)"
-          strokeWidth={2}
-        />
-        <text
-          x={x(points.length - 1) + 9}
-          y={y(last.solde)}
-          dominantBaseline="middle"
-          fontSize={11}
-          fill="var(--t-paper)"
-        >
-          {eurosRound(last.solde)}
-        </text>
+            {ticks.map((t) => (
+              <g key={t}>
+                <line
+                  x1={PAD.left}
+                  x2={PAD.left + plotW}
+                  y1={y(t)}
+                  y2={y(t)}
+                  stroke={t === 0 ? "var(--t-sage)" : "var(--t-line)"}
+                  strokeWidth={1}
+                />
+                <text
+                  x={PAD.left + plotW + 8}
+                  y={y(t)}
+                  dominantBaseline="middle"
+                  fontSize={11}
+                  fill={t < 0 ? "var(--t-alert)" : "var(--t-sage)"}
+                >
+                  {compactEuros(t)}
+                </text>
+              </g>
+            ))}
 
-        <text x={PAD.left} y={H - 6} fontSize={11} fill="var(--t-sage)">
-          {monthShort(points[0].month)}
-        </text>
-        <text x={PAD.left + plotW} y={H - 6} textAnchor="end" fontSize={11} fill="var(--t-sage)">
-          {monthShort(last.month)}
-        </text>
-      </svg>
+            {/* Aujourd'hui : la frontière entre le relevé et l'hypothèse. */}
+            <line
+              x1={todayX}
+              x2={todayX}
+              y1={PAD.top - 6}
+              y2={PAD.top + plotH}
+              stroke="var(--t-sage)"
+              strokeWidth={1}
+              strokeDasharray="3 3"
+            />
+            <text
+              x={todayX}
+              y={PAD.top - 10}
+              textAnchor={todayX > PAD.left + plotW - 40 ? "end" : todayX < PAD.left + 40 ? "start" : "middle"}
+              fontSize={11}
+              fill="var(--t-sage)"
+            >
+              aujourd'hui
+            </text>
+
+            {hover !== null && hover !== todayIndex ? (
+              <line
+                x1={x(hover)}
+                x2={x(hover)}
+                y1={PAD.top}
+                y2={PAD.top + plotH}
+                stroke="var(--t-paper)"
+                strokeOpacity={0.35}
+                strokeWidth={1}
+              />
+            ) : null}
+
+            <g clipPath={`url(#${clipId})`}>
+              {solid.length > 1 ? (
+                <polyline
+                  points={solid.join(" ")}
+                  fill="none"
+                  stroke="var(--t-brass)"
+                  strokeWidth={2.5}
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                />
+              ) : null}
+              {dashed.length > 1 ? (
+                <polyline
+                  points={dashed.join(" ")}
+                  fill="none"
+                  stroke="var(--t-brass)"
+                  strokeWidth={2}
+                  strokeDasharray="3 5"
+                  strokeLinejoin="round"
+                  strokeLinecap="round"
+                  opacity={0.8}
+                />
+              ) : null}
+            </g>
+
+            {/* Point actif */}
+            <circle
+              cx={x(active)}
+              cy={y(active === todayIndex ? activeBefore : activePoint.solde)}
+              r={5}
+              fill="var(--t-brass)"
+              stroke="var(--t-pine)"
+              strokeWidth={2}
+            />
+
+            {/* Jalons : une pastille numérotée au pied de chaque marche, détaillée sous le graphe. */}
+            {milestones.map(({ p, i }, k) => {
+              const bad = p.deducted.some((d) => !d.feasible)
+              return (
+                <g key={p.month}>
+                  <circle
+                    cx={x(i)}
+                    cy={y(p.solde)}
+                    r={8}
+                    fill={bad ? "var(--t-alert)" : "var(--t-paper)"}
+                    stroke="var(--t-pine)"
+                    strokeWidth={2}
+                  />
+                  <text
+                    x={x(i)}
+                    y={y(p.solde)}
+                    textAnchor="middle"
+                    dominantBaseline="central"
+                    fontSize={10}
+                    fontWeight={700}
+                    fill="var(--t-ink)"
+                  >
+                    {k + 1}
+                  </text>
+                </g>
+              )
+            })}
+
+            {xLabels.map(({ i, text }) => (
+              <text
+                key={i}
+                x={x(i)}
+                y={H - 8}
+                textAnchor={i === 0 ? "start" : i === points.length - 1 ? "end" : "middle"}
+                fontSize={11}
+                fill="var(--t-sage)"
+              >
+                {text}
+              </text>
+            ))}
+          </svg>
         )}
       </div>
 
-      <figcaption className="mt-2 text-xs" style={{ color: "var(--t-sage)" }}>
-        Trait plein : solde réel jusqu'à {monthShort(currentMonth)}. Pointillés : projection au rythme des six
-        derniers mois, projets inclus déduits à leur échéance.
+      <figcaption className="mt-3 space-y-1.5">
+        <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs" style={{ color: "var(--t-sage)" }}>
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden className="h-0.5 w-4 rounded-full" style={{ backgroundColor: "var(--t-brass)" }} />
+            Solde réel
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden className="w-4 border-t-2 border-dashed" style={{ borderColor: "var(--t-brass)" }} />
+            Projection
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden className="size-2.5 rounded-full" style={{ backgroundColor: "var(--t-paper)" }} />
+            Projet déduit
+          </span>
+        </div>
+        {milestones.length > 0 && (
+          <ol className="space-y-1 pt-1">
+            {milestones.map(({ p }, k) => (
+              <li key={p.month} className="tnum flex gap-2 text-xs">
+                <span
+                  className="flex size-4 shrink-0 items-center justify-center rounded-full text-[10px] font-bold"
+                  style={{
+                    backgroundColor: p.deducted.some((d) => !d.feasible) ? "var(--t-alert)" : "var(--t-paper)",
+                    color: "var(--t-ink)",
+                  }}
+                >
+                  {k + 1}
+                </span>
+                <span style={{ color: "var(--t-paper)" }}>
+                  {monthShort(p.month)} · {p.deducted.map((d) => `${d.name} −${eurosRound(d.amount)}`).join(", ")}
+                  <span style={{ color: p.deducted.some((d) => !d.feasible) ? "var(--t-alert)" : "var(--t-sage)" }}>
+                    {" "}
+                    · {eurosRound(before(p))} avant, {eurosRound(p.solde)} après
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ol>
+        )}
+        <p className="text-xs" style={{ color: "var(--t-sage)" }}>
+          Glisse le doigt sur la courbe pour lire un mois. La projection prolonge le rythme des six derniers mois.
+        </p>
       </figcaption>
     </figure>
   )
