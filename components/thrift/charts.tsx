@@ -3,7 +3,7 @@
 import { useId, useMemo, useState } from "react"
 
 import { useWidth } from "./use-width"
-import type { Category, CategoryDelta, MonthPoint } from "@/lib/budget"
+import { type Category, type CategoryDelta, type MonthPoint, SAVINGS_COLOR } from "@/lib/budget"
 import { euros, eurosRound, monthShort, signedEuros } from "@/lib/format"
 import { Empty } from "./ui"
 
@@ -34,7 +34,7 @@ export function CategoryBars({ rows, onSelect }: CategoryBarsProps) {
     <ul className="space-y-3.5">
       {shown.map(({ category, spent, budget }) => {
         const over = budget ? spent - budget : 0
-        const isOver = budget !== undefined && category.id !== "epargne" && over > 0
+        const isOver = budget !== undefined && over > 0
         const Wrapper = onSelect ? "button" : "div"
 
         return (
@@ -99,7 +99,7 @@ type Series = { key: keyof MonthPoint & string; label: string; color: string }
 const SERIES: Series[] = [
   { key: "variable", label: "Dépenses variables", color: "#d95926" },
   { key: "fixed", label: "Charges fixes", color: "#3987e5" },
-  { key: "saved", label: "Épargne", color: "#008300" },
+  { key: "saved", label: "Épargne", color: SAVINGS_COLOR },
 ]
 
 export function EvolutionChart({ history }: { history: MonthPoint[] }) {
@@ -281,7 +281,7 @@ export function ProjectionChart({
   if (points.length < 2) {
     return (
       <Empty title="Pas encore de projection">
-        Renseigne un solde de départ et note ton épargne pour voir la courbe se dessiner.
+        Note un versement ou recale sur ton solde réel pour voir la courbe se dessiner.
       </Empty>
     )
   }
@@ -378,8 +378,8 @@ export function ProjectionChart({
       </div>
 
       <figcaption className="mt-2 text-xs" style={{ color: "var(--t-sage)" }}>
-        Trait plein : épargne enregistrée jusqu'à {monthShort(currentMonth)}. Pointillés : projection au rythme moyen
-        observé, projets inclus déduits à leur échéance.
+        Trait plein : solde réel jusqu'à {monthShort(currentMonth)}. Pointillés : projection au rythme des six
+        derniers mois, projets inclus déduits à leur échéance.
       </figcaption>
     </figure>
   )

@@ -5,18 +5,44 @@ import {
   type MonthData,
   type Project,
   deleteMonth,
+  ensureSavingsMigrated,
   ensureSchema,
   getDb,
   getGlobalDefaultFixedExpenses,
   getMonth,
   getUser,
   getUserMonths,
-  updateInitialSavings,
   updatePayDay,
   updateUserField,
   upsertMonthStatement,
 } from "@/lib/db"
+import type { SavingsMove } from "@/lib/budget"
 import { sessionUser } from "@/lib/session"
+
+const MOVE_KINDS = new Set(["versement", "retrait", "ajustement"])
+
+/** La liste reçue est-elle une liste de mouvements bien formés ? */
+function parseSavingsMoves(value: unknown): SavingsMove[] | null {
+  if (!Array.isArray(value)) return null
+  const out: SavingsMove[] = []
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object") return null
+    const m = raw as Record<string, unknown>
+    if (typeof m.id !== "string" || !m.id) return null
+    if (typeof m.kind !== "string" || !MOVE_KINDS.has(m.kind)) return null
+    if (typeof m.amount !== "number" || !Number.isFinite(m.amount)) return null
+    if (m.kind !== "ajustement" && m.amount <= 0) return null
+    if (typeof m.date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(m.date)) return null
+    out.push({
+      id: m.id,
+      kind: m.kind as SavingsMove["kind"],
+      amount: Math.round(m.amount * 100) / 100,
+      date: m.date,
+      note: typeof m.note === "string" ? m.note.slice(0, 200) : "",
+    })
+  }
+  return out
+}
 
 function storageError(error: unknown) {
   console.error("[API expenses]", error)
@@ -49,6 +75,9 @@ export async function GET(request: Request) {
     const record = await getUser(user)
     if (!record) return UNAUTHORIZED()
 
+    // Avant toute lecture de mois : l'ancienne épargne doit en être sortie.
+    const savingsMoves = await ensureSavingsMigrated(record)
+
     const monthParam = new URL(request.url).searchParams.get("month")
     if (monthParam) {
       const found = await getMonth(user, monthParam)
@@ -61,8 +90,7 @@ export async function GET(request: Request) {
       customCategories: record.customCategories,
       categoryBudgets: record.categoryBudgets,
       projects: record.projects,
-      initialSavings: record.initialSavings,
-      initialSavingsMonth: record.initialSavingsMonth,
+      savingsMoves,
       payDay: record.payDay,
     })
   } catch (error) {
@@ -92,19 +120,17 @@ export async function POST(request: Request) {
     }
 
     if (body.isProjectUpdate) {
-      const { projects, initialSavings, initialSavingsMonth } = body as {
-        projects?: Project[]
-        initialSavings?: number
-        initialSavingsMonth?: string
-      }
+      const { projects } = body as { projects?: Project[] }
       if (Array.isArray(projects)) {
         await updateUserField(user, "projects", projects)
       }
-      await updateInitialSavings(
-        user,
-        typeof initialSavings === "number" ? initialSavings : undefined,
-        typeof initialSavingsMonth === "string" ? initialSavingsMonth : undefined
-      )
+      return NextResponse.json({ success: true })
+    }
+
+    if (body.isSavingsUpdate) {
+      const moves = parseSavingsMoves(body.savingsMoves)
+      if (!moves) return NextResponse.json({ error: "Mouvements d'épargne invalides" }, { status: 400 })
+      await updateUserField(user, "savings_moves", moves)
       return NextResponse.json({ success: true })
     }
 

@@ -4,6 +4,7 @@ import { describe, test } from "node:test"
 import {
   type MonthData,
   type Project,
+  type SavingsMove,
   DEFAULT_CATEGORIES,
   buildProjection,
   compareToPreviousMonth,
@@ -13,8 +14,14 @@ import {
   defaultDateFor,
   frequentSuggestions,
   lastDayOf,
+  migrateLegacySavings,
   monthlyHistory,
+  moveDelta,
   overBudgetCategories,
+  recalibration,
+  savingsBalanceAt,
+  savingsFlow,
+  savingsHistory,
   spendByCategory,
   toCsv,
   weeklyPacing,
@@ -66,17 +73,21 @@ describe("soldes du mois", () => {
 })
 
 describe("budgets", () => {
-  test("l'épargne n'est jamais un dépassement", () => {
+  test("une catégorie au-delà de son budget est signalée avec son dépassement", () => {
     const spend = spendByCategory(
-      [expense(500, "epargne", "2026-10-02"), expense(250, "alimentation", "2026-10-03")],
+      [expense(90, "loisirs", "2026-10-02"), expense(250, "alimentation", "2026-10-03")],
       DEFAULT_CATEGORIES
     )
-    const over = overBudgetCategories(DEFAULT_CATEGORIES, spend, { epargne: 100, alimentation: 200 })
+    const over = overBudgetCategories(DEFAULT_CATEGORIES, spend, { loisirs: 100, alimentation: 200 })
     assert.deepEqual(
       over.map((o) => o.id),
       ["alimentation"]
     )
     assert.equal(over[0].spent - over[0].budget, 50)
+  })
+
+  test("la catégorie Épargne n'existe plus : l'épargne passe par les mouvements", () => {
+    assert.ok(!DEFAULT_CATEGORIES.some((c) => c.id === "epargne"))
   })
 
   test("une catégorie sans budget n'est jamais signalée", () => {
@@ -206,97 +217,257 @@ describe("comparaison avec le mois précédent", () => {
   })
 })
 
-describe("projection d'épargne", () => {
-  const maintenant = new Date(2026, 9, 15) // octobre 2026
-  const months = [
-    month("2026-09", 2000, [expense(200, "epargne", "2026-09-10")]),
-    month("2026-10", 2000, [expense(300, "epargne", "2026-10-10")]),
+const move = (kind: SavingsMove["kind"], amount: number, date: string, note = ""): SavingsMove => ({
+  id: `${kind}-${date}-${amount}`,
+  kind,
+  amount,
+  date,
+  note,
+})
+
+describe("mouvements d'épargne", () => {
+  const moves = [
+    move("versement", 200, "2026-09-10"),
+    move("retrait", 50, "2026-09-20"),
+    move("versement", 300, "2026-10-05"),
+    move("ajustement", -25, "2026-10-31"),
   ]
 
-  test("l'épargne du mois d'ancrage est comptée, pas sautée", () => {
-    const p = buildProjection({
-      months,
-      projects: [],
-      initialSavings: 1000,
-      initialSavingsMonth: "2026-10",
-      now: maintenant,
-    })
-    // Ancrage en octobre à 1000, plus les 300 épargnés en octobre.
-    assert.equal(p.points[0].month, "2026-10")
-    assert.equal(p.points[0].solde, 1300)
-    assert.equal(p.currentSavings, 1300)
+  test("un retrait se soustrait, un ajustement garde son signe", () => {
+    assert.equal(moveDelta(move("versement", 10, "2026-10-01")), 10)
+    assert.equal(moveDelta(move("retrait", 10, "2026-10-01")), -10)
+    assert.equal(moveDelta(move("ajustement", -7, "2026-10-01")), -7)
   })
 
-  test("les mois antérieurs à l'ancrage sont ignorés", () => {
+  test("le flux du mois ignore les ajustements", () => {
+    assert.deepEqual(savingsFlow(moves, "2026-10"), { deposited: 300, withdrawn: 0, net: 300 })
+    assert.deepEqual(savingsFlow(moves, "2026-09"), { deposited: 200, withdrawn: 50, net: 150 })
+  })
+
+  test("le solde cumule tout jusqu'à la fin du mois, ajustements compris", () => {
+    assert.equal(savingsBalanceAt(moves, "2026-08"), 0)
+    assert.equal(savingsBalanceAt(moves, "2026-09"), 150)
+    assert.equal(savingsBalanceAt(moves, "2026-10"), 425)
+  })
+
+  test("l'historique couvre chaque mois, trous compris, du plus ancien au plus récent", () => {
+    const h = savingsHistory([move("versement", 100, "2026-07-01"), move("versement", 40, "2026-09-03")], "2026-10")
+    assert.deepEqual(
+      h.map((r) => [r.month, r.net, r.balance]),
+      [
+        ["2026-07", 100, 100],
+        ["2026-08", 0, 100],
+        ["2026-09", 40, 140],
+        ["2026-10", 0, 140],
+      ]
+    )
+  })
+
+  test("l'historique ventile versé, retiré et ajusté, et garde les mouvements du mois", () => {
+    const oct = savingsHistory(moves, "2026-10").find((r) => r.month === "2026-10")!
+    assert.equal(oct.deposited, 300)
+    assert.equal(oct.withdrawn, 0)
+    assert.equal(oct.adjusted, -25)
+    assert.equal(oct.moves.length, 2)
+  })
+
+  test("l'historique va jusqu'à un mouvement daté dans le futur", () => {
+    const h = savingsHistory([move("versement", 5, "2026-09-01"), move("versement", 10, "2026-12-01")], "2026-10")
+    assert.deepEqual(
+      h.map((r) => r.month),
+      ["2026-09", "2026-10", "2026-11", "2026-12"]
+    )
+  })
+
+  test("sans mouvement, l'historique est vide", () => {
+    assert.deepEqual(savingsHistory([], "2026-10"), [])
+  })
+
+  test("un recalage crée un ajustement égal à l'écart, daté de la fin du mois", () => {
+    const adj = recalibration(moves, "2026-10", 500)
+    assert.equal(adj?.kind, "ajustement")
+    assert.equal(adj?.amount, 75)
+    assert.equal(adj?.date, "2026-10-31")
+  })
+
+  test("un recalage sans écart ne crée rien", () => {
+    assert.equal(recalibration(moves, "2026-10", 425), null)
+  })
+
+  test("le reste à vivre déduit les versements et récupère les retraits", () => {
+    const t = computeTotals({
+      salary: 2000,
+      expenses: [expense(100, "alimentation", "2026-10-02")],
+      fixedExpenses: [],
+      extraIncomes: [],
+      savings: { deposited: 300, withdrawn: 50, net: 250 },
+    })
+    assert.equal(t.savingsNet, 250)
+    assert.equal(t.balance, 1650)
+    assert.equal(t.totalExpenses, 100, "l'épargne n'est pas une dépense")
+  })
+})
+
+describe("projection d'épargne", () => {
+  const maintenant = new Date(2026, 9, 15) // octobre 2026
+  const moves = [move("versement", 200, "2026-09-10"), move("versement", 300, "2026-10-10")]
+  const projet = (id: string, amount: number, targetMonth: string, included = true): Project => ({
+    id,
+    name: id,
+    amount,
+    targetMonth,
+    type: "achat",
+    included,
+  })
+
+  test("le solde actuel est le solde réel, sans projet déduit", () => {
+    const p = buildProjection({ moves, projects: [projet("p", 100, "2026-10")], now: maintenant })
+    assert.equal(p.currentSavings, 500)
+    assert.equal(p.points.find((x) => x.month === "2026-10")?.solde, 400, "la courbe, elle, déduit le projet")
+  })
+
+  test("le futur est extrapolé sur la moyenne des mois complets passés", () => {
+    const p = buildProjection({ moves, projects: [projet("p", 10, "2027-01")], now: maintenant })
+    assert.deepEqual(
+      p.points.filter((x) => x.projected).map((x) => x.month),
+      ["2026-11", "2026-12", "2027-01"]
+    )
+    // Seul septembre est un mois complet depuis le premier mouvement : 200 par mois.
+    assert.equal(p.points.find((x) => x.month === "2026-11")?.solde, 700)
+  })
+
+  test("la moyenne porte au plus sur les six derniers mois complets, trous comptés à zéro", () => {
+    const longs = [
+      move("versement", 1000, "2026-01-05"), // hors fenêtre
+      move("versement", 600, "2026-06-05"),
+      move("retrait", 60, "2026-08-05"),
+    ]
+    const p = buildProjection({ moves: longs, projects: [projet("p", 1, "2026-11")], now: maintenant })
+    // Fenêtre avril → septembre : (600 − 60) / 6 = 90.
+    const oct = p.points.find((x) => x.month === "2026-10")!.solde
+    assert.equal(p.points.find((x) => x.month === "2026-11")?.solde, oct + 90 - 1)
+  })
+
+  test("un retrait fait baisser la moyenne", () => {
     const p = buildProjection({
-      months,
-      projects: [],
-      initialSavings: 1000,
-      initialSavingsMonth: "2026-10",
+      moves: [move("versement", 300, "2026-08-01"), move("retrait", 300, "2026-09-01")],
+      projects: [projet("p", 1, "2026-11")],
       now: maintenant,
     })
-    assert.ok(!p.points.some((x) => x.month === "2026-09"))
+    assert.equal(p.points.find((x) => x.month === "2026-11")?.solde, -1)
+  })
+
+  test("si tout a commencé ce mois-ci, le rythme est celui du mois en cours", () => {
+    const p = buildProjection({
+      moves: [move("versement", 250, "2026-10-02")],
+      projects: [projet("p", 1, "2026-11")],
+      now: maintenant,
+    })
+    assert.equal(p.points.find((x) => x.month === "2026-11")?.solde, 499)
   })
 
   test("un projet est déduit à son échéance et sa faisabilité est tranchée", () => {
-    const projets: Project[] = [
-      { id: "p1", name: "Vélo", amount: 1200, targetMonth: "2026-12", type: "achat", included: true },
-      { id: "p2", name: "Japon", amount: 9000, targetMonth: "2027-01", type: "voyage", included: true },
-    ]
     const p = buildProjection({
-      months,
-      projects: projets,
-      initialSavings: 1000,
-      initialSavingsMonth: "2026-10",
+      moves,
+      projects: [projet("p1", 600, "2026-12"), projet("p2", 9000, "2027-01")],
       now: maintenant,
     })
-    assert.equal(p.feasibility.get("p1"), true, "1 200 € en décembre doit être finançable")
-    assert.equal(p.feasibility.get("p2"), false, "9 000 € en janvier ne l'est pas")
+    assert.equal(p.feasibility.get("p1"), true)
+    assert.equal(p.feasibility.get("p2"), false)
     assert.equal(p.hasNegative, true)
   })
 
   test("un projet exclu ne pèse pas sur la projection", () => {
-    const exclu: Project[] = [
-      { id: "p1", name: "Vélo", amount: 99999, targetMonth: "2026-12", type: "achat", included: false },
-    ]
-    const p = buildProjection({
-      months,
-      projects: exclu,
-      initialSavings: 1000,
-      initialSavingsMonth: "2026-10",
-      now: maintenant,
-    })
+    const p = buildProjection({ moves, projects: [projet("p1", 99999, "2026-12", false)], now: maintenant })
     assert.equal(p.hasNegative, false)
     assert.equal(p.feasibility.has("p1"), false)
   })
 
-  test("seuls les mois strictement futurs sont extrapolés", () => {
-    const projets: Project[] = [
-      { id: "p", name: "Loin", amount: 10, targetMonth: "2027-01", type: "achat", included: true },
-    ]
-    const p = buildProjection({
-      months,
-      projects: projets,
-      initialSavings: 1000,
-      initialSavingsMonth: "2026-10",
-      now: maintenant,
-    })
-    const futurs = p.points.filter((x) => x.projected).map((x) => x.month)
-    assert.deepEqual(futurs, ["2026-11", "2026-12", "2027-01"])
-    // Moyenne observée depuis l'ancrage : seul octobre est dans la fenêtre, soit 300.
-    assert.equal(p.points.find((x) => x.month === "2026-11")?.solde, 1600)
+  test("un versement programmé plus tard compte à son mois, la courbe part quand même d'aujourd'hui", () => {
+    const p = buildProjection({ moves: [move("versement", 100, "2026-12-05")], projects: [], now: maintenant })
+    assert.equal(p.points[0].month, "2026-10")
+    assert.equal(p.currentSavings, 0)
+    assert.equal(p.points.find((x) => x.month === "2026-12")?.solde, 100)
   })
 
-  test("sans solde renseigné, la projection part du premier mois connu à zéro", () => {
-    const p = buildProjection({
-      months,
-      projects: [],
+  test("sans mouvement, la projection part de zéro au mois courant", () => {
+    const p = buildProjection({ moves: [], projects: [], now: maintenant })
+    assert.equal(p.currentSavings, 0)
+    assert.deepEqual(p.points, [{ month: "2026-10", solde: 0, projected: false }])
+  })
+})
+
+describe("migration de l'ancienne épargne", () => {
+  const maintenant = new Date(2026, 9, 15)
+  const legacy = [
+    month("2026-08", 2000, [expense(100, "epargne", "2026-08-03", "Livret"), expense(20, "loisirs", "2026-08-04")]),
+    month("2026-09", 2000, [expense(200, "epargne", "2026-09-10")]),
+    month("2026-10", 2000, [expense(300, "epargne", "2026-10-10"), expense(-80, "epargne", "2026-10-12", "Pioche")]),
+    month("2026-12", 2000, [expense(999, "epargne", "2026-12-01")]),
+  ]
+
+  // Ancien calcul du solde « aujourd'hui », recopié pour servir d'oracle.
+  function oldCurrentSavings(months: MonthData[], initialSavings: number, initialSavingsMonth: string, current: string) {
+    const net = new Map(
+      months.map((m) => [m.month, m.expenses.filter((e) => e.category === "epargne").reduce((s, e) => s + e.amount, 0)])
+    )
+    const has = initialSavings > 0 && !!initialSavingsMonth
+    const anchor = has ? initialSavingsMonth : ([...net.keys()].sort()[0] ?? current)
+    let bal = has ? initialSavings : 0
+    for (const [mo, v] of net) if (mo >= anchor && mo <= current) bal += v
+    return bal
+  }
+
+  test("les dépenses Épargne deviennent des versements ou des retraits et quittent les dépenses", () => {
+    const r = migrateLegacySavings({ months: legacy, initialSavings: 0, initialSavingsMonth: "" })
+    assert.equal(r.moves.filter((m) => m.kind === "versement").length, 4)
+    const retrait = r.moves.find((m) => m.kind === "retrait")!
+    assert.equal(retrait.amount, 80)
+    assert.equal(retrait.note, "Pioche")
+    assert.ok(r.months.every((m) => m.expenses.every((e) => e.category !== "epargne")))
+    assert.equal(r.months.find((m) => m.month === "2026-08")?.expenses.length, 1, "les autres dépenses restent")
+    assert.deepEqual(r.changedMonths, ["2026-08", "2026-09", "2026-10", "2026-12"])
+  })
+
+  test("le solde de départ devient un ajustement qui préserve le solde exact", () => {
+    const r = migrateLegacySavings({ months: legacy, initialSavings: 1000, initialSavingsMonth: "2026-09" })
+    const adj = r.moves.find((m) => m.kind === "ajustement")!
+    assert.equal(adj.date, "2026-09-01")
+    assert.equal(adj.amount, 900, "1 000 moins les 100 versés en août, déjà comptés dans le solde de départ")
+  })
+
+  for (const [initial, ref] of [
+    [0, ""],
+    [1000, "2026-09"],
+    [1000, "2026-10"],
+    [500, "2026-06"],
+    [700, ""],
+  ] as const) {
+    test(`invariant : même solde aujourd'hui avant et après migration (${initial} / ${ref || "sans mois"})`, () => {
+      const r = migrateLegacySavings({ months: legacy, initialSavings: initial, initialSavingsMonth: ref })
+      const attendu = oldCurrentSavings(legacy, initial, ref, "2026-10")
+      assert.equal(savingsBalanceAt(r.moves, "2026-10"), attendu)
+      assert.equal(buildProjection({ moves: r.moves, projects: [], now: maintenant }).currentSavings, attendu)
+    })
+  }
+
+  test("une dépense Épargne datée hors de son mois est ramenée dans ce mois", () => {
+    const r = migrateLegacySavings({
+      months: [month("2026-10", 0, [expense(50, "epargne", "2026-11-02")])],
       initialSavings: 0,
       initialSavingsMonth: "",
-      now: maintenant,
     })
-    assert.equal(p.points[0].month, "2026-09")
-    assert.equal(p.points[0].solde, 200)
+    assert.equal(r.moves[0].date, "2026-10-31")
+  })
+
+  test("sans épargne ni solde de départ, rien ne change", () => {
+    const r = migrateLegacySavings({
+      months: [month("2026-10", 0, [expense(5, "loisirs", "2026-10-02")])],
+      initialSavings: 0,
+      initialSavingsMonth: "",
+    })
+    assert.deepEqual(r.moves, [])
+    assert.deepEqual(r.changedMonths, [])
   })
 })
 
@@ -309,12 +480,14 @@ describe("historique et export", () => {
     )
   })
 
-  test("l'épargne d'un mois ne compte que la catégorie Épargne", () => {
-    const [h] = monthlyHistory([
-      month("2026-10", 2000, [expense(300, "epargne", "2026-10-02"), expense(50, "loisirs", "2026-10-03")]),
-    ])
-    assert.equal(h.saved, 300)
-    assert.equal(h.variable, 350)
+  test("l'épargne d'un mois vient des mouvements, nette des retraits", () => {
+    const [h] = monthlyHistory(
+      [month("2026-10", 2000, [expense(50, "loisirs", "2026-10-03")])],
+      [move("versement", 300, "2026-10-02"), move("retrait", 100, "2026-10-09"), move("ajustement", 40, "2026-10-31")]
+    )
+    assert.equal(h.saved, 200)
+    assert.equal(h.variable, 50)
+    assert.equal(h.balance, 1750)
   })
 
   test("le CSV échappe les points-virgules et les guillemets", () => {
@@ -325,6 +498,14 @@ describe("historique et export", () => {
     const ligne = csv.split("\r\n")[1]
     assert.equal(ligne, '2026-10;2026-10-02;Alimentation;"Courses; ""bio""";12.50')
     assert.equal(ligne.split(";").length > 5, true, "le point-virgule interne reste dans le champ cité")
+  })
+
+  test("le CSV inclut les mouvements d'épargne, montant signé", () => {
+    const csv = toCsv([], DEFAULT_CATEGORIES, [move("retrait", 80, "2026-10-12", "Pioche"), move("versement", 300, "2026-10-02")])
+    assert.deepEqual(csv.split("\r\n").slice(1), [
+      "2026-10;2026-10-02;Épargne · versement;;300.00",
+      "2026-10;2026-10-12;Épargne · retrait;Pioche;-80.00",
+    ])
   })
 
   test("l'en-tête du CSV est stable", () => {

@@ -49,13 +49,28 @@ export type Project = {
   included: boolean
 }
 
+/**
+ * Un mouvement sur le pot d'épargne. Versement et retrait portent un montant
+ * positif ; un ajustement (recalage sur le solde réel) est signé : c'est l'écart
+ * constaté. Le mois se déduit de la date.
+ */
+export type SavingsMoveKind = "versement" | "retrait" | "ajustement"
+
+export type SavingsMove = {
+  id: string
+  kind: SavingsMoveKind
+  amount: number
+  /** "YYYY-MM-DD" */
+  date: string
+  note: string
+}
+
 export type AllData = {
   months: MonthData[]
   customCategories?: Category[]
   categoryBudgets?: Record<string, number>
   projects?: Project[]
-  initialSavings?: number
-  initialSavingsMonth?: string
+  savingsMoves?: SavingsMove[]
   /** Jour du mois où tombe la paie (1-31). 0 = fin du mois (comportement par défaut). */
   payDay?: number
 }
@@ -71,9 +86,11 @@ export const DEFAULT_CATEGORIES: Category[] = [
   { id: "restaurant", name: "Restaurant", color: "#c98500" },
   { id: "shopping", name: "Shopping", color: "#9085e9" },
   { id: "sante", name: "Santé", color: "#e66767" },
-  { id: "epargne", name: "Épargne", color: "#008300" },
   { id: "autres", name: "Autres", color: "#97a5a0" },
 ]
+
+/** Teinte de l'épargne (graphiques, barre d'objectif) : l'ancienne catégorie « Épargne ». */
+export const SAVINGS_COLOR = "#008300"
 
 // Teintes proposées pour une catégorie créée par l'utilisateur. La première est
 // la seule du jeu de référence restée libre ; les suivantes s'en écartent assez
@@ -131,9 +148,11 @@ export type MonthTotals = {
   totalExtraIncome: number
   totalIncome: number
   totalOut: number
-  /** Ce qu'il reste à vivre : revenus − (charges fixes + dépenses variables). */
+  /** Épargne nette du mois : versements − retraits. Négative si l'on a plus pioché que versé. */
+  savingsNet: number
+  /** Ce qu'il reste à vivre : revenus − (charges fixes + dépenses variables + épargne nette). */
   balance: number
-  /** Part des revenus déjà consommée, bornée à 100. */
+  /** Part des revenus déjà consommée ou mise de côté, bornée à 100. */
   spentShare: number
 }
 
@@ -142,20 +161,24 @@ export function computeTotals(input: {
   expenses: Expense[]
   fixedExpenses: FixedExpense[]
   extraIncomes: IncomeEntry[]
+  savings?: SavingsFlow
 }): MonthTotals {
   const totalExpenses = input.expenses.reduce((sum, e) => sum + e.amount, 0)
   const totalFixed = input.fixedExpenses.reduce((sum, e) => sum + e.amount, 0)
   const totalExtraIncome = input.extraIncomes.reduce((sum, i) => sum + i.amount, 0)
   const totalIncome = input.salary + totalExtraIncome
   const totalOut = totalExpenses + totalFixed
+  const savingsNet = input.savings?.net ?? 0
+  const consumed = totalOut + savingsNet
   return {
     totalExpenses,
     totalFixed,
     totalExtraIncome,
     totalIncome,
     totalOut,
-    balance: totalIncome - totalOut,
-    spentShare: totalIncome > 0 ? Math.min(100, (totalOut / totalIncome) * 100) : 0,
+    savingsNet,
+    balance: totalIncome - consumed,
+    spentShare: totalIncome > 0 ? Math.min(100, Math.max(0, (consumed / totalIncome) * 100)) : 0,
   }
 }
 
@@ -170,14 +193,13 @@ export function spendByCategory(expenses: Expense[], categories: Category[]): Re
   return out
 }
 
-/** L'épargne n'est jamais un dépassement : c'est de l'argent mis de côté, pas dépensé. */
 export function overBudgetCategories(
   categories: Category[],
   spend: Record<string, number>,
   budgets: Record<string, number>
 ) {
   return categories
-    .filter((cat) => cat.id !== "epargne" && budgets[cat.id] && spend[cat.id] > budgets[cat.id])
+    .filter((cat) => budgets[cat.id] && spend[cat.id] > budgets[cat.id])
     .map((cat) => ({ ...cat, spent: spend[cat.id], budget: budgets[cat.id] }))
 }
 
@@ -295,22 +317,24 @@ export type MonthPoint = {
 }
 
 /** Une ligne par mois enregistré, du plus ancien au plus récent. */
-export function monthlyHistory(months: MonthData[]): MonthPoint[] {
+export function monthlyHistory(months: MonthData[], moves: SavingsMove[] = []): MonthPoint[] {
   return [...months]
     .sort((a, b) => a.month.localeCompare(b.month))
     .map((m) => {
+      const savings = savingsFlow(moves, m.month)
       const totals = computeTotals({
         salary: m.salary,
         expenses: m.expenses,
         fixedExpenses: m.fixedExpenses,
         extraIncomes: m.extraIncomes ?? [],
+        savings,
       })
       return {
         month: m.month,
         income: totals.totalIncome,
         fixed: totals.totalFixed,
         variable: totals.totalExpenses,
-        saved: m.expenses.filter((e) => e.category === "epargne").reduce((s, e) => s + e.amount, 0),
+        saved: savings.net,
         balance: totals.balance,
       }
     })
@@ -358,130 +382,256 @@ export function compareToPreviousMonth(
   return { previousMonth, rows }
 }
 
+// === Épargne : mouvements, solde, historique ===
+const round2 = (n: number) => Math.round(n * 100) / 100
+
+export const monthOf = (date: string) => date.slice(0, 7)
+
+/** Effet d'un mouvement sur le solde. */
+export function moveDelta(m: SavingsMove): number {
+  if (m.kind === "versement") return m.amount
+  if (m.kind === "retrait") return -m.amount
+  return m.amount
+}
+
+export type SavingsFlow = { deposited: number; withdrawn: number; net: number }
+
+/**
+ * Ce qui a été versé et retiré dans un mois. Les ajustements n'en font pas
+ * partie : ils corrigent le compte, ils ne sortent ni n'entrent dans le budget.
+ */
+export function savingsFlow(moves: SavingsMove[], month: string): SavingsFlow {
+  let deposited = 0
+  let withdrawn = 0
+  moves.forEach((m) => {
+    if (monthOf(m.date) !== month) return
+    if (m.kind === "versement") deposited += m.amount
+    else if (m.kind === "retrait") withdrawn += m.amount
+  })
+  return { deposited: round2(deposited), withdrawn: round2(withdrawn), net: round2(deposited - withdrawn) }
+}
+
+/** Solde du pot à la fin d'un mois : tous les mouvements jusque-là, ajustements compris. */
+export function savingsBalanceAt(moves: SavingsMove[], month: string): number {
+  return round2(moves.filter((m) => monthOf(m.date) <= month).reduce((s, m) => s + moveDelta(m), 0))
+}
+
+export type SavingsMonth = SavingsFlow & {
+  month: string
+  /** Somme des ajustements du mois, signée. */
+  adjusted: number
+  /** Solde en fin de mois. */
+  balance: number
+  /** Mouvements du mois, triés par date. */
+  moves: SavingsMove[]
+}
+
+/**
+ * Une ligne par mois, du premier mouvement jusqu'à `upTo` (ou jusqu'au dernier
+ * mouvement s'il est daté plus tard). Les mois sans mouvement figurent à zéro :
+ * un trou dans l'épargne doit se voir.
+ */
+export function savingsHistory(moves: SavingsMove[], upTo: string): SavingsMonth[] {
+  if (moves.length === 0) return []
+  const months = moves.map((m) => monthOf(m.date)).sort()
+  const first = months[0]
+  const last = months[months.length - 1] > upTo ? months[months.length - 1] : upTo
+
+  const rows: SavingsMonth[] = []
+  let balance = 0
+  for (let cursor = first, guard = 0; cursor <= last && guard < 1200; cursor = addMonths(cursor, 1), guard++) {
+    const inMonth = moves.filter((m) => monthOf(m.date) === cursor).sort((a, b) => a.date.localeCompare(b.date))
+    const flow = savingsFlow(inMonth, cursor)
+    const adjusted = round2(inMonth.filter((m) => m.kind === "ajustement").reduce((s, m) => s + m.amount, 0))
+    balance = round2(balance + flow.net + adjusted)
+    rows.push({ month: cursor, ...flow, adjusted, balance, moves: inMonth })
+  }
+  return rows
+}
+
+/**
+ * Recalage : « fin <mois>, mon solde réel est de X ». Renvoie l'ajustement à
+ * ajouter pour que le solde calculé égale X, daté du dernier jour du mois, ou
+ * null s'il n'y a pas d'écart.
+ */
+export function recalibration(
+  moves: SavingsMove[],
+  month: string,
+  realBalance: number,
+  id: string = `adj-${Date.now()}`
+): SavingsMove | null {
+  const gap = round2(realBalance - savingsBalanceAt(moves, month))
+  if (gap === 0) return null
+  return { id, kind: "ajustement", amount: gap, date: lastDayOf(month), note: "Recalage" }
+}
+
 // === Projection d'épargne ===
 export type ProjectionPoint = { month: string; solde: number; projected: boolean }
 
 export type Projection = {
   points: ProjectionPoint[]
+  /** Solde réel à la fin du mois en cours, sans aucun projet déduit. */
   currentSavings: number
   projectedFinalSavings: number
   hasNegative: boolean
   /** Par id de projet : le solde suffit-il à son échéance ? */
   feasibility: Map<string, boolean>
+  /** Épargne nette mensuelle retenue pour extrapoler. */
+  monthlyPace: number
 }
+
+/** Nombre de mois complets sur lesquels on mesure le rythme d'épargne. */
+const PACE_WINDOW = 6
 
 /**
  * Simule le solde d'épargne mois par mois.
  *
- * Le solde de départ est daté du mois où il a été renseigné pour la dernière fois.
- * On ancre la projection à ce mois, avec ce solde, puis on ajoute l'épargne de ce
- * mois-là inclus et de tous les suivants. Seuls les mois strictement futurs sont
- * extrapolés à partir de la moyenne observée ; un mois passé sans donnée vaut 0.
+ * Jusqu'au mois en cours, la courbe suit le solde réel. Au-delà, chaque mois
+ * sans mouvement saisi ajoute le rythme moyen (versements − retraits) des six
+ * derniers mois complets — à partir du premier mouvement, les mois vides comptant
+ * zéro. Les projets inclus sont déduits à leur échéance.
  */
-export function buildProjection(input: {
-  months: MonthData[]
-  projects: Project[]
-  initialSavings: number
-  initialSavingsMonth: string
-  now?: Date
-}): Projection {
+export function buildProjection(input: { moves: SavingsMove[]; projects: Project[]; now?: Date }): Projection {
   const currentMonth = currentMonthKey(input.now ?? new Date())
+  const { moves } = input
+  const history = savingsHistory(moves, currentMonth)
+  const firstMonth = history.length > 0 && history[0].month < currentMonth ? history[0].month : currentMonth
 
-  const netByMonth = new Map<string, number>()
-  input.months.forEach((m) => {
-    netByMonth.set(
-      m.month,
-      m.expenses.filter((e) => e.category === "epargne").reduce((s, e) => s + e.amount, 0)
-    )
-  })
+  const windowStart = [addMonths(currentMonth, -PACE_WINDOW), firstMonth].sort()[1]
+  const windowMonths: string[] = []
+  for (let m = windowStart; m < currentMonth; m = addMonths(m, 1)) windowMonths.push(m)
+  const paceMonths = windowMonths.length > 0 ? windowMonths : [currentMonth]
+  const monthlyPace = round2(paceMonths.reduce((s, m) => s + savingsFlow(moves, m).net, 0) / paceMonths.length)
 
-  const includedProjects = input.projects.filter((p) => p.included)
-  const hasStartingBalance = input.initialSavings > 0 && !!input.initialSavingsMonth
-
-  let anchorMonth: string
-  let anchorBalance: number
-  if (hasStartingBalance) {
-    anchorMonth = input.initialSavingsMonth
-    anchorBalance = input.initialSavings
-  } else {
-    const recorded = [...netByMonth.keys()].sort()
-    anchorMonth = recorded.length > 0 ? recorded[0] : currentMonth
-    anchorBalance = 0
-  }
-
-  const observedFromAnchor = [...netByMonth.keys()].filter((mo) => mo >= anchorMonth)
-  const avgNet =
-    observedFromAnchor.length > 0
-      ? observedFromAnchor.reduce((s, mo) => s + (netByMonth.get(mo) as number), 0) / observedFromAnchor.length
-      : 0
-
-  const endCandidates = [
-    anchorMonth,
-    currentMonth,
-    ...observedFromAnchor,
-    ...includedProjects.map((p) => p.targetMonth).filter((mo) => mo >= currentMonth),
-  ].sort()
-  const endMonth = endCandidates[endCandidates.length - 1]
-
+  const includedProjects = input.projects.filter((p) => p.included && p.targetMonth >= currentMonth)
   const projectsByMonth = new Map<string, Project[]>()
   includedProjects.forEach((p) => {
-    if (p.targetMonth < currentMonth) return
     const arr = projectsByMonth.get(p.targetMonth) || []
     arr.push(p)
     projectsByMonth.set(p.targetMonth, arr)
   })
 
+  const lastRecorded = history.length > 0 ? history[history.length - 1].month : currentMonth
+  const endMonth = [currentMonth, lastRecorded, ...includedProjects.map((p) => p.targetMonth)].sort().pop() as string
+  const byMonth = new Map(history.map((h) => [h.month, h]))
+
   const points: ProjectionPoint[] = []
   const feasibility = new Map<string, boolean>()
-  let runningBalance = anchorBalance
-  let cursor = anchorMonth
-  let guard = 0
-  while (cursor <= endMonth && guard < 600) {
-    const isRecorded = netByMonth.has(cursor)
+  let running = 0
+  for (let cursor = firstMonth, guard = 0; cursor <= endMonth && guard < 1200; cursor = addMonths(cursor, 1), guard++) {
+    const row = byMonth.get(cursor)
+    const hasMoves = !!row && row.moves.length > 0
     const isFuture = cursor > currentMonth
-    runningBalance += isRecorded ? (netByMonth.get(cursor) as number) : isFuture ? avgNet : 0
+    if (hasMoves) running += row.net + row.adjusted
+    else if (isFuture) running += monthlyPace
 
-    const due = projectsByMonth.get(cursor) || []
-    due.forEach((p) => {
-      feasibility.set(p.id, runningBalance >= p.amount)
-      runningBalance -= p.amount
+    ;(projectsByMonth.get(cursor) || []).forEach((p) => {
+      feasibility.set(p.id, running >= p.amount)
+      running -= p.amount
     })
 
-    points.push({
-      month: cursor,
-      solde: Math.round(runningBalance * 100) / 100,
-      projected: isFuture && !isRecorded,
-    })
-    cursor = addMonths(cursor, 1)
-    guard++
+    points.push({ month: cursor, solde: round2(running), projected: isFuture && !hasMoves })
   }
 
-  const currentPoint = points.find((p) => p.month === currentMonth)
   return {
     points,
-    currentSavings: currentPoint ? currentPoint.solde : anchorBalance,
-    projectedFinalSavings: points.length > 0 ? points[points.length - 1].solde : anchorBalance,
+    currentSavings: savingsBalanceAt(moves, currentMonth),
+    projectedFinalSavings: points.length > 0 ? points[points.length - 1].solde : 0,
     hasNegative: points.some((p) => p.solde < 0),
     feasibility,
+    monthlyPace,
   }
 }
 
+// === Migration de l'ancienne épargne ===
+/**
+ * Convertit l'ancien modèle — épargne saisie comme dépense de catégorie
+ * « epargne », plus un solde de départ ancré sur un mois — en mouvements.
+ *
+ * L'ancien calcul ignorait l'épargne saisie avant le mois du solde de départ
+ * (elle y était déjà comptée). L'ajustement de départ vaut donc ce solde moins
+ * ce qui a été versé avant : le solde au début du mois de référence reste celui
+ * que l'utilisateur avait saisi, sans effacer l'historique antérieur.
+ */
+export function migrateLegacySavings(input: {
+  months: MonthData[]
+  initialSavings: number
+  initialSavingsMonth: string
+}): { moves: SavingsMove[]; months: MonthData[]; changedMonths: string[] } {
+  const moves: SavingsMove[] = []
+  const changedMonths: string[] = []
+
+  const months = input.months.map((m) => {
+    const legacy = m.expenses.filter((e) => e.category === "epargne")
+    if (legacy.length === 0) return m
+    changedMonths.push(m.month)
+    legacy.forEach((e) => {
+      if (e.amount === 0) return
+      moves.push({
+        id: e.id,
+        kind: e.amount > 0 ? "versement" : "retrait",
+        amount: Math.abs(e.amount),
+        date: monthOf(e.date) === m.month ? e.date : lastDayOf(m.month),
+        note: e.description,
+      })
+    })
+    return { ...m, expenses: m.expenses.filter((e) => e.category !== "epargne") }
+  })
+
+  if (input.initialSavings > 0 && input.initialSavingsMonth) {
+    const before = moves
+      .filter((mv) => monthOf(mv.date) < input.initialSavingsMonth)
+      .reduce((s, mv) => s + moveDelta(mv), 0)
+    const amount = round2(input.initialSavings - before)
+    if (amount !== 0) {
+      moves.push({
+        id: "migration-solde-depart",
+        kind: "ajustement",
+        amount,
+        date: `${input.initialSavingsMonth}-01`,
+        note: "Solde de départ",
+      })
+    }
+  }
+
+  moves.sort((a, b) => a.date.localeCompare(b.date))
+  changedMonths.sort()
+  return { moves, months, changedMonths }
+}
+
 // === Export ===
-/** Une ligne par dépense, toutes périodes confondues. Séparateur ';' pour Excel FR. */
-export function toCsv(months: MonthData[], categories: Category[]): string {
+const MOVE_LABELS: Record<SavingsMoveKind, string> = {
+  versement: "versement",
+  retrait: "retrait",
+  ajustement: "recalage",
+}
+
+/**
+ * Une ligne par dépense et par mouvement d'épargne, toutes périodes confondues.
+ * Séparateur ';' pour Excel FR. Les mouvements portent un montant signé.
+ */
+export function toCsv(months: MonthData[], categories: Category[], moves: SavingsMove[] = []): string {
   const label = (id: string) => categories.find((c) => c.id === id)?.name ?? id
   const escape = (v: string) => (/[";\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v)
 
-  const rows = [["mois", "date", "categorie", "description", "montant"]]
-  ;[...months]
-    .sort((a, b) => a.month.localeCompare(b.month))
-    .forEach((m) => {
-      ;[...m.expenses]
-        .sort((a, b) => a.date.localeCompare(b.date))
-        .forEach((e) => {
-          rows.push([m.month, e.date, label(e.category), e.description, e.amount.toFixed(2)])
-        })
+  const lines: { sortKey: string; cells: string[] }[] = []
+  months.forEach((m) => {
+    m.expenses.forEach((e) => {
+      lines.push({
+        sortKey: `${m.month}|${e.date}`,
+        cells: [m.month, e.date, label(e.category), e.description, e.amount.toFixed(2)],
+      })
     })
+  })
+  moves.forEach((mv) => {
+    lines.push({
+      sortKey: `${monthOf(mv.date)}|${mv.date}`,
+      cells: [monthOf(mv.date), mv.date, `Épargne · ${MOVE_LABELS[mv.kind]}`, mv.note, moveDelta(mv).toFixed(2)],
+    })
+  })
+  // Tri stable : à date égale, l'ordre d'insertion est conservé.
+  lines.sort((a, b) => a.sortKey.localeCompare(b.sortKey))
 
+  const rows = [["mois", "date", "categorie", "description", "montant"], ...lines.map((l) => l.cells)]
   return rows.map((r) => r.map((cell) => escape(String(cell))).join(";")).join("\r\n")
 }

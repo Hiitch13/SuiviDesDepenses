@@ -1,5 +1,7 @@
 import { createClient, type Client } from "@libsql/client";
 
+import { type SavingsMove, migrateLegacySavings } from "./budget";
+
 import {
   type Household,
   type HouseholdMonth,
@@ -54,9 +56,15 @@ export type UserRecord = {
   // Budgets mensuels optionnels par catégorie (clé = id de catégorie)
   categoryBudgets: Record<string, number>;
   projects: Project[];
-  // Solde d'épargne de départ et mois de référence de la projection
+  // Ancien modèle d'épargne (solde de départ ancré sur un mois). Plus lu par
+  // l'app : sert seulement à la migration vers les mouvements, et reste en base
+  // pour pouvoir revenir en arrière.
   initialSavings: number;
   initialSavingsMonth: string;
+  // Versements, retraits et ajustements du pot d'épargne
+  savingsMoves: SavingsMove[];
+  // L'ancienne épargne (catégorie « epargne » + solde de départ) a-t-elle été convertie ?
+  savingsMigrated: boolean;
   // Jour du mois où tombe la paie (1-31). 0 = fin du mois.
   payDay: number;
 };
@@ -93,7 +101,9 @@ const SCHEMA = [
     projects TEXT NOT NULL DEFAULT '[]',
     initial_savings REAL NOT NULL DEFAULT 0,
     initial_savings_month TEXT NOT NULL DEFAULT '',
-    pay_day INTEGER NOT NULL DEFAULT 0
+    pay_day INTEGER NOT NULL DEFAULT 0,
+    savings_moves TEXT NOT NULL DEFAULT '[]',
+    savings_migrated INTEGER NOT NULL DEFAULT 0
   )`,
   `CREATE TABLE IF NOT EXISTS months (
     user TEXT NOT NULL,
@@ -171,9 +181,16 @@ export function ensureSchema(): Promise<void> {
  */
 async function migrate(): Promise<void> {
   const { rows } = await getDb().execute({ sql: "PRAGMA table_info(users)", args: [] });
-  const hasPayDay = rows.some((r) => String(r.name) === "pay_day");
-  if (!hasPayDay) {
-    await getDb().execute({ sql: "ALTER TABLE users ADD COLUMN pay_day INTEGER NOT NULL DEFAULT 0", args: [] });
+  const columns = new Set(rows.map((r) => String(r.name)));
+  const added: [string, string][] = [
+    ["pay_day", "INTEGER NOT NULL DEFAULT 0"],
+    ["savings_moves", "TEXT NOT NULL DEFAULT '[]'"],
+    ["savings_migrated", "INTEGER NOT NULL DEFAULT 0"],
+  ];
+  for (const [name, definition] of added) {
+    if (!columns.has(name)) {
+      await getDb().execute({ sql: `ALTER TABLE users ADD COLUMN ${name} ${definition}`, args: [] });
+    }
   }
 }
 
@@ -204,6 +221,8 @@ export async function getUser(username: string): Promise<UserRecord | null> {
     initialSavings: Number(row.initial_savings) || 0,
     initialSavingsMonth: String(row.initial_savings_month ?? ""),
     payDay: Number(row.pay_day) || 0,
+    savingsMoves: parseJson(row.savings_moves, []),
+    savingsMigrated: Number(row.savings_migrated) === 1,
   };
 }
 
@@ -255,7 +274,7 @@ export async function createUser(username: string, passwordHash: string): Promis
 
 export async function updateUserField(
   username: string,
-  field: "default_fixed_expenses" | "custom_categories" | "category_budgets" | "projects",
+  field: "default_fixed_expenses" | "custom_categories" | "category_budgets" | "projects" | "savings_moves",
   value: unknown
 ): Promise<void> {
   await getDb().execute({
@@ -264,26 +283,35 @@ export async function updateUserField(
   });
 }
 
-export async function updateInitialSavings(
-  username: string,
-  initialSavings: number | undefined,
-  initialSavingsMonth: string | undefined
-): Promise<void> {
-  const sets: string[] = [];
-  const args: (number | string)[] = [];
-  if (initialSavings !== undefined) {
-    sets.push("initial_savings = ?");
-    args.push(initialSavings);
-  }
-  if (initialSavingsMonth !== undefined) {
-    sets.push("initial_savings_month = ?");
-    args.push(initialSavingsMonth);
-  }
-  if (sets.length === 0) return;
-  await getDb().execute({
-    sql: `UPDATE users SET ${sets.join(", ")} WHERE username = ?`,
-    args: [...args, username],
+/**
+ * Convertit une fois pour toutes l'ancienne épargne d'un compte (dépenses de
+ * catégorie « epargne » + solde de départ) en mouvements, et renvoie les
+ * mouvements à jour.
+ *
+ * Tout part en une seule batch : les mois nettoyés, la liste des mouvements et
+ * le drapeau. Soit tout est écrit, soit rien, et l'on retentera au prochain
+ * chargement. Les colonnes initial_savings* ne sont pas effacées.
+ */
+export async function ensureSavingsMigrated(record: UserRecord): Promise<SavingsMove[]> {
+  if (record.savingsMigrated) return record.savingsMoves;
+
+  const months = await getUserMonths(record.username);
+  const { moves, months: cleaned, changedMonths } = migrateLegacySavings({
+    months,
+    initialSavings: record.initialSavings,
+    initialSavingsMonth: record.initialSavingsMonth,
   });
+  const merged = [...record.savingsMoves, ...moves];
+
+  const statements = cleaned
+    .filter((m) => changedMonths.includes(m.month))
+    .map((m) => upsertMonthStatement({ ...m, user: record.username }));
+  statements.push({
+    sql: "UPDATE users SET savings_moves = ?, savings_migrated = 1 WHERE username = ? AND savings_migrated = 0",
+    args: [JSON.stringify(merged), record.username],
+  });
+  await getDb().batch(statements, "write");
+  return merged;
 }
 
 export async function updatePayDay(username: string, payDay: number): Promise<void> {

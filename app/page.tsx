@@ -14,10 +14,13 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { useToast } from "@/components/ui/use-toast"
 
-import { CategoryBars, ComparisonList, EvolutionChart, ProjectionChart } from "@/components/thrift/charts"
+import { CategoryBars, ComparisonList, EvolutionChart } from "@/components/thrift/charts"
+import { Chip, FIELD, FIELD_STYLE, IconButton, LABEL, LABEL_STYLE, Sheet } from "@/components/thrift/controls"
 import { Dock, type Screen } from "@/components/thrift/dock"
 import { Login } from "@/components/thrift/login"
 import { Reservoir } from "@/components/thrift/reservoir"
+import { RecalibrateSheet, SavingsMoveSheet } from "@/components/thrift/savings-move-sheet"
+import { SavingsScreen } from "@/components/thrift/savings-screen"
 import { Amount, Dot, Empty, Panel, Row, SectionTitle, Wordmark } from "@/components/thrift/ui"
 
 import {
@@ -32,6 +35,8 @@ import {
   PROJECT_TYPES,
   type Project,
   type ProjectType,
+  SAVINGS_COLOR,
+  type SavingsMove,
   buildProjection,
   compareToPreviousMonth,
   computeTotals,
@@ -42,6 +47,8 @@ import {
   lastDayOf,
   monthlyHistory,
   overBudgetCategories,
+  savingsFlow,
+  savingsHistory,
   spendByCategory,
   toCsv,
   weeklyPacing,
@@ -56,22 +63,6 @@ import {
   sharedSpendByCategory,
 } from "@/lib/household"
 import { dayLabel, euros, eurosRound, initials, monthLabel, ofMonth } from "@/lib/format"
-
-// Styles de champ partagés : les champs natifs restent plus fiables au doigt
-// que des composants enrobés, et ils héritent déjà des jetons.
-// `min-w-0` est indispensable : placé dans une rangée flex à côté d'un bouton,
-// un champ en `w-full` refuse sinon de rétrécir, déborde l'écran, et étire au
-// passage la barre d'onglets fixée en bas.
-const FIELD =
-  "w-full min-w-0 rounded-xl border px-3.5 py-3 text-base outline-none transition-colors placeholder:text-[var(--t-sage)] focus:border-[var(--t-brass)]"
-const FIELD_STYLE = {
-  backgroundColor: "var(--t-moss)",
-  borderColor: "var(--t-line)",
-  color: "var(--t-paper)",
-} as const
-
-const LABEL = "mb-1.5 block text-sm"
-const LABEL_STYLE = { color: "var(--t-sage)" } as const
 
 export default function Thrift() {
   // ==========================================
@@ -101,9 +92,15 @@ export default function Thrift() {
   const [customCategories, setCustomCategories] = useState<Category[]>([])
   const [categoryBudgets, setCategoryBudgets] = useState<Record<string, number>>({})
   const [projects, setProjects] = useState<Project[]>([])
-  const [initialSavings, setInitialSavings] = useState(0)
-  const [initialSavingsInput, setInitialSavingsInput] = useState("0")
-  const [initialSavingsMonth, setInitialSavingsMonth] = useState("")
+  const [savingsMoves, setSavingsMoves] = useState<SavingsMove[]>([])
+  // Feuille de saisie d'un mouvement d'épargne : le mouvement corrigé (ou null
+  // pour un nouveau) et le mois où dater un nouveau.
+  const [moveSheet, setMoveSheet] = useState<{ open: boolean; move: SavingsMove | null; month: string }>({
+    open: false,
+    move: null,
+    month: "",
+  })
+  const [isRecalibrateOpen, setIsRecalibrateOpen] = useState(false)
   // Jour du mois où tombe la paie (1-31). 0 = fin du mois.
   const [payDay, setPayDay] = useState(0)
 
@@ -257,9 +254,7 @@ export default function Thrift() {
       setCustomCategories(data.customCategories || [])
       setCategoryBudgets(data.categoryBudgets || {})
       setProjects(data.projects || [])
-      setInitialSavings(data.initialSavings || 0)
-      setInitialSavingsInput(String(data.initialSavings || 0))
-      setInitialSavingsMonth(data.initialSavingsMonth || "")
+      setSavingsMoves(data.savingsMoves || [])
       setPayDay(data.payDay || 0)
     } catch (error) {
       console.error(error)
@@ -532,12 +527,6 @@ export default function Thrift() {
 
       const delRes = await fetch(`/api/expenses?month=${encodeURIComponent(month)}`, { method: "DELETE" })
       if (!delRes.ok) throw new Error("delete")
-
-      // Reporte la référence du solde de départ si elle pointait sur l'ancien mois.
-      if (initialSavingsMonth === month) {
-        await saveProjects(projects, initialSavings, target)
-        setInitialSavingsMonth(target)
-      }
 
       toast({ title: "Date corrigée", description: `${monthLabel(month)} → ${monthLabel(target)}` })
       setMonth(target)
@@ -825,24 +814,15 @@ export default function Thrift() {
   }
 
   // ==========================================
-  // 8. Projets et solde de départ
+  // 8. Projets et épargne
   // ==========================================
-  async function saveProjects(
-    newProjects: Project[],
-    newInitialSavings: number = initialSavings,
-    newInitialSavingsMonth: string = initialSavingsMonth
-  ) {
+  async function saveProjects(newProjects: Project[]) {
     if (!currentUser) return false
     try {
       const res = await fetch("/api/expenses", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          isProjectUpdate: true,
-          projects: newProjects,
-          initialSavings: newInitialSavings,
-          initialSavingsMonth: newInitialSavingsMonth,
-        }),
+        body: JSON.stringify({ isProjectUpdate: true, projects: newProjects }),
       })
       return res.ok
     } catch (error) {
@@ -902,17 +882,47 @@ export default function Thrift() {
     }
   }
 
-  async function saveInitialSavings() {
-    const value = parseFloat(initialSavingsInput) || 0
-    // Le solde est daté du mois consulté : l'épargne est cumulée à partir de là.
-    const refMonth = month || currentMonthStr
-    if (await saveProjects(projects, value, refMonth)) {
-      setInitialSavings(value)
-      setInitialSavingsMonth(refMonth)
-      toast({ title: `Solde enregistré, référence ${monthLabel(refMonth)}` })
-    } else {
+  /** Enregistre la liste complète des mouvements ; l'écran réagit tout de suite, et revient en arrière en cas d'échec. */
+  async function saveSavingsMoves(next: SavingsMove[], successTitle: string) {
+    if (!currentUser) return false
+    const previous = savingsMoves
+    setSavingsMoves(next)
+    try {
+      const res = await fetch("/api/expenses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isSavingsUpdate: true, savingsMoves: next }),
+      })
+      if (!res.ok) throw new Error("savings")
+      toast({ title: successTitle })
+      return true
+    } catch (error) {
+      console.error(error)
+      setSavingsMoves(previous)
       toast({ title: "Erreur d'enregistrement", variant: "destructive" })
+      return false
     }
+  }
+
+  function openMoveSheet(targetMonth: string, move: SavingsMove | null = null) {
+    setMoveSheet({ open: true, move, month: targetMonth })
+  }
+
+  async function submitSavingsMove(move: SavingsMove) {
+    const exists = savingsMoves.some((m) => m.id === move.id)
+    const next = exists ? savingsMoves.map((m) => (m.id === move.id ? move : m)) : [...savingsMoves, move]
+    const title = exists ? "Mouvement modifié" : move.kind === "retrait" ? "Retrait noté" : "Versement noté"
+    if (await saveSavingsMoves(next, title)) setMoveSheet((s) => ({ ...s, open: false }))
+  }
+
+  async function deleteSavingsMove(id: string) {
+    if (await saveSavingsMoves(savingsMoves.filter((m) => m.id !== id), "Mouvement supprimé")) {
+      setMoveSheet((s) => ({ ...s, open: false }))
+    }
+  }
+
+  async function recalibrate(adjustment: SavingsMove) {
+    if (await saveSavingsMoves([...savingsMoves, adjustment], "Solde recalé")) setIsRecalibrateOpen(false)
   }
 
   // ==========================================
@@ -1114,7 +1124,7 @@ export default function Thrift() {
   // 11. Export
   // ==========================================
   function exportCsv() {
-    const csv = toCsv(allMonthsData, categories)
+    const csv = toCsv(allMonthsData, categories, savingsMoves)
     // Le BOM force Excel à lire l'UTF-8 : sans lui les accents sont cassés.
     const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" })
     const url = URL.createObjectURL(blob)
@@ -1129,11 +1139,13 @@ export default function Thrift() {
   // ==========================================
   // 12. Dérivés
   // ==========================================
+  const monthSavings = savingsFlow(savingsMoves, month)
   const totals = computeTotals({
     salary: parseFloat(salary) || 0,
     expenses,
     fixedExpenses,
     extraIncomes,
+    savings: monthSavings,
   })
   const spend = spendByCategory(expenses, categories)
   const overBudget = overBudgetCategories(categories, spend, categoryBudgets)
@@ -1141,24 +1153,21 @@ export default function Thrift() {
   const daysLeft = daysRemaining(month, payDay || null)
 
   const savingsGoalNum = parseFloat(savingsGoalInput) || 0
-  const savedThisMonth = spend["epargne"] || 0
+  // Épargne nette du mois (versements − retraits), sans descendre sous zéro pour la barre.
+  const savedThisMonth = Math.max(0, monthSavings.net)
   const savingsProgress = savingsGoalNum > 0 ? Math.min(100, (savedThisMonth / savingsGoalNum) * 100) : 0
 
   const suggestions = frequentSuggestions(allMonthsData, categories)
-  const history = useMemo(() => monthlyHistory(allMonthsData), [allMonthsData])
+  const history = useMemo(() => monthlyHistory(allMonthsData, savingsMoves), [allMonthsData, savingsMoves])
   const comparison = useMemo(
     () => compareToPreviousMonth(allMonthsData, month, categories),
     [allMonthsData, month, categories]
   )
-  const projection = useMemo(
-    () => buildProjection({ months: allMonthsData, projects, initialSavings, initialSavingsMonth }),
-    [allMonthsData, projects, initialSavings, initialSavingsMonth]
-  )
+  const projection = useMemo(() => buildProjection({ moves: savingsMoves, projects }), [savingsMoves, projects])
+  const savingsByMonth = useMemo(() => savingsHistory(savingsMoves, currentMonthStr), [savingsMoves, currentMonthStr])
 
-  // Barres « où ça part » : les dépenses variables, hors épargne qui n'est pas une sortie.
-  const spendRows = categories
-    .filter((c) => c.id !== "epargne")
-    .map((c) => ({ category: c, spent: spend[c.id] || 0, budget: categoryBudgets[c.id] }))
+  // Barres « où ça part » : les dépenses variables.
+  const spendRows = categories.map((c) => ({ category: c, spent: spend[c.id] || 0, budget: categoryBudgets[c.id] }))
 
   // Historique filtré : recherche plein texte, catégorie, portée.
   const searchPool = useMemo(() => {
@@ -1196,9 +1205,7 @@ export default function Thrift() {
   const settlement = currentHouseholdMonth ? settle(currentHouseholdMonth, memberNames) : null
   const sharedTotal = currentHouseholdMonth ? householdTotal(currentHouseholdMonth) : 0
   const sharedSpend = currentHouseholdMonth ? sharedSpendByCategory(currentHouseholdMonth) : {}
-  const sharedRows = categories
-    .filter((c) => c.id !== "epargne")
-    .map((c) => ({ category: c, spent: sharedSpend[c.id] || 0 }))
+  const sharedRows = categories.map((c) => ({ category: c, spent: sharedSpend[c.id] || 0 }))
   const isShared = view === "foyer" && !!household
 
   // Le mois réel n'existe pas encore, mais d'autres mois sont enregistrés :
@@ -1668,15 +1675,25 @@ export default function Thrift() {
                           className="h-full rounded-r-[4px]"
                           style={{
                             width: `${savingsProgress}%`,
-                            backgroundColor: catById("epargne")?.color ?? "var(--t-brass)",
+                            backgroundColor: SAVINGS_COLOR,
                           }}
                         />
                       </div>
                       <p className="tnum mt-1.5 text-xs" style={{ color: "var(--t-sage)" }}>
                         {euros(savedThisMonth)} mis de côté sur {euros(savingsGoalNum)}
+                        {monthSavings.withdrawn > 0 && ` (${euros(monthSavings.withdrawn)} retirés)`}
                       </p>
                     </>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => openMoveSheet(month)}
+                    className="mt-3 flex items-center gap-1.5 text-sm font-semibold"
+                    style={{ color: "var(--t-brass)" }}
+                  >
+                    <Plus className="size-4" />
+                    Versement ou retrait
+                  </button>
                 </Panel>
 
                 <Panel flush>
@@ -1835,62 +1852,14 @@ export default function Thrift() {
 
         {/* ===================== ÉPARGNE ===================== */}
         {screen === "epargne" && (
-          <div className="space-y-4 px-4 pt-4">
-            <Panel>
-              <SectionTitle>Épargne</SectionTitle>
-              <p className="figure-hero text-[clamp(2.5rem,12vw,3.75rem)]" style={{ color: "var(--t-brass)" }}>
-                {euros(projection.currentSavings)}
-              </p>
-              <p className="mt-2 text-sm" style={{ color: "var(--t-sage)" }}>
-                Aujourd'hui. Projetée à {eurosRound(projection.projectedFinalSavings)} une fois les projets inclus
-                déduits.
-              </p>
-              {projection.hasNegative && (
-                <p className="mt-3 text-sm" style={{ color: "var(--t-alert)" }}>
-                  En l'état, le solde passe sous zéro avant la fin de la projection. Décale un projet ou augmente
-                  l'épargne mensuelle.
-                </p>
-              )}
-            </Panel>
-
-            <Panel>
-              <SectionTitle>Projection</SectionTitle>
-              <ProjectionChart points={projection.points} currentMonth={currentMonthStr} />
-            </Panel>
-
-            <Panel>
-              <SectionTitle>Solde de départ</SectionTitle>
-              <p className="mb-3 text-sm" style={{ color: "var(--t-sage)" }}>
-                Ce que tu as déjà de côté. Daté du mois consulté{month ? ` (${monthLabel(month)})` : ""} : l'épargne est
-                cumulée à partir de là.
-              </p>
-              <div className="flex gap-2">
-                <input
-                  type="number"
-                  step="0.01"
-                  inputMode="decimal"
-                  value={initialSavingsInput}
-                  onChange={(e) => setInitialSavingsInput(e.target.value)}
-                  className={FIELD}
-                  style={FIELD_STYLE}
-                  aria-label="Solde d'épargne de départ"
-                />
-                <button
-                  type="button"
-                  onClick={saveInitialSavings}
-                  className="shrink-0 rounded-xl px-4 font-semibold"
-                  style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
-                >
-                  Enregistrer
-                </button>
-              </div>
-              {initialSavingsMonth && (
-                <p className="mt-2 text-xs" style={{ color: "var(--t-sage)" }}>
-                  Référence actuelle : {monthLabel(initialSavingsMonth)}
-                </p>
-              )}
-            </Panel>
-
+          <SavingsScreen
+            history={savingsByMonth}
+            projection={projection}
+            currentMonth={currentMonthStr}
+            onAddMove={(m) => openMoveSheet(m)}
+            onEditMove={(mv) => openMoveSheet(mv.date.slice(0, 7), mv)}
+            onRecalibrate={() => setIsRecalibrateOpen(true)}
+          >
             <Panel flush>
               <div className="px-4 pb-1 pt-3">
                 <SectionTitle aside={`${eurosRound(includedTotal)} inclus`}>Projets</SectionTitle>
@@ -1975,7 +1944,7 @@ export default function Thrift() {
                 </div>
               </form>
             </Panel>
-          </div>
+          </SavingsScreen>
         )}
 
         {/* ===================== RÉGLAGES ===================== */}
@@ -2113,7 +2082,7 @@ export default function Thrift() {
                 Laisse vide pour ne pas suivre de budget sur une catégorie.
               </p>
               <BudgetEditor
-                categories={categories.filter((c) => c.id !== "epargne")}
+                categories={categories}
                 budgets={categoryBudgets}
                 onSave={async (next) => {
                   if (await saveCategoryBudgets(next)) setCategoryBudgets(next)
@@ -2553,6 +2522,23 @@ export default function Thrift() {
       </Sheet>
 
       {/* ===================== Corriger la date ===================== */}
+      {/* Épargne : mouvement et recalage */}
+      <SavingsMoveSheet
+        open={moveSheet.open}
+        onOpenChange={(v) => setMoveSheet((s) => ({ ...s, open: v }))}
+        move={moveSheet.move}
+        defaultMonth={moveSheet.month || currentMonthStr}
+        onSave={submitSavingsMove}
+        onDelete={deleteSavingsMove}
+      />
+      <RecalibrateSheet
+        open={isRecalibrateOpen}
+        onOpenChange={setIsRecalibrateOpen}
+        moves={savingsMoves}
+        currentMonth={currentMonthStr}
+        onConfirm={recalibrate}
+      />
+
       <Sheet open={isEditMonthOpen} onOpenChange={setIsEditMonthOpen} title="Corriger la date du mois">
         <form onSubmit={renameMonth} className="space-y-3">
           <input
@@ -2634,89 +2620,6 @@ export default function Thrift() {
 // =============================================================
 // Petits composants locaux
 // =============================================================
-
-/** Une feuille ancrée en bas : à portée de pouce, contrairement à une fenêtre centrée. */
-function Sheet({
-  open,
-  onOpenChange,
-  title,
-  children,
-}: {
-  open: boolean
-  onOpenChange: (v: boolean) => void
-  title: string
-  children: React.ReactNode
-}) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className="top-auto bottom-0 left-0 right-0 max-h-[88svh] w-full max-w-2xl translate-x-0 translate-y-0 overflow-y-auto rounded-b-none rounded-t-3xl border-x-0 border-b-0 p-5 sm:left-1/2 sm:-translate-x-1/2"
-        style={{ backgroundColor: "var(--t-pine)", borderColor: "var(--t-line)" }}
-      >
-        <DialogHeader className="mb-3 text-left">
-          <DialogTitle className="text-lg font-semibold" style={{ color: "var(--t-paper)" }}>
-            {title}
-          </DialogTitle>
-        </DialogHeader>
-        {children}
-      </DialogContent>
-    </Dialog>
-  )
-}
-
-function IconButton({
-  label,
-  onClick,
-  danger,
-  children,
-}: {
-  label: string
-  onClick: () => void
-  danger?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      // Au repos les icônes restent grises : une liste de dix corbeilles rouges
-      // crie plus fort que les montants. Le rouge n'apparaît qu'à l'intention.
-      className={cn(
-        "shrink-0 rounded-lg p-2 text-[var(--t-sage)] transition-colors hover:bg-white/[0.06]",
-        danger && "hover:text-[var(--t-alert)] focus-visible:text-[var(--t-alert)]"
-      )}
-    >
-      {children}
-      <span className="sr-only">{label}</span>
-    </button>
-  )
-}
-
-function Chip({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className="flex shrink-0 items-center whitespace-nowrap rounded-xl border px-3 py-2 text-sm transition-colors"
-      style={{
-        backgroundColor: active ? "var(--t-brass)" : "var(--t-moss)",
-        borderColor: active ? "var(--t-brass)" : "var(--t-line)",
-        color: active ? "var(--t-ink)" : "var(--t-paper)",
-      }}
-    >
-      {children}
-    </button>
-  )
-}
 
 function ExpenseRow({
   expense,
