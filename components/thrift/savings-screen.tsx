@@ -48,8 +48,15 @@ export function SavingsScreen({
   const thisMonth = history.find((h) => h.month === currentMonth)
   const rows = [...history].reverse()
 
+  // La liste entière se replie : sur une longue histoire elle repousse la
+  // projection loin sous le pli.
+  const [listOpen, setListOpen] = useState(true)
+  const allOpen = rows.length > 0 && rows.every((r) => open.has(r.month))
+  const toggleAll = () => setOpen(allOpen ? new Set() : new Set(rows.map((r) => r.month)))
+
   return (
-    <div className="space-y-4 px-4 pt-4">
+    <div className="space-y-4 px-4 pt-4 lg:grid lg:grid-cols-2 lg:items-start lg:gap-4 lg:space-y-0">
+      <div className="space-y-4">
       <Panel>
         <SectionTitle>Épargne</SectionTitle>
         <p className="figure-hero text-[clamp(2.5rem,12vw,3.75rem)]" style={{ color: "var(--t-brass)" }}>
@@ -80,10 +87,37 @@ export function SavingsScreen({
       </Panel>
 
       <Panel flush>
-        <div className="px-4 pb-1 pt-3">
-          <SectionTitle>Mois par mois</SectionTitle>
+        <div className="flex items-center gap-2 px-4 py-3">
+          <button
+            type="button"
+            onClick={() => setListOpen((v) => !v)}
+            aria-expanded={listOpen}
+            className="-mx-1 flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 text-left"
+          >
+            <h2 className="text-[0.95rem] font-semibold" style={{ color: "var(--t-paper)" }}>
+              Mois par mois
+            </h2>
+            <span className="text-xs" style={{ color: "var(--t-sage)" }}>
+              {rows.length} mois
+            </span>
+            <ChevronDown
+              className="size-4 shrink-0 transition-transform"
+              style={{ color: "var(--t-sage)", transform: listOpen ? "rotate(180deg)" : undefined }}
+              aria-hidden
+            />
+          </button>
+          {listOpen && rows.length > 1 && (
+            <button
+              type="button"
+              onClick={toggleAll}
+              className="shrink-0 text-xs font-semibold"
+              style={{ color: "var(--t-brass)" }}
+            >
+              {allOpen ? "Tout replier" : "Tout déplier"}
+            </button>
+          )}
         </div>
-        {rows.length === 0 ? (
+        {!listOpen ? null : rows.length === 0 ? (
           <Empty title="Rien de mis de côté pour l'instant">
             Note un versement, ou recale sur ton solde réel si tu as déjà de l'épargne.
           </Empty>
@@ -100,7 +134,9 @@ export function SavingsScreen({
           ))
         )}
       </Panel>
+      </div>
 
+      <div className="space-y-4">
       <Panel>
         <SectionTitle aside={`rythme ${signedEuros(projection.monthlyPace)} / mois`}>Projection</SectionTitle>
         <ProjectionChart points={projection.points} currentMonth={currentMonth} />
@@ -118,6 +154,7 @@ export function SavingsScreen({
       </Panel>
 
       {children}
+      </div>
     </div>
   )
 }
@@ -137,7 +174,7 @@ function MonthBlock({
 }) {
   const empty = row.moves.length === 0
   return (
-    <div className="border-b last:border-b-0" style={{ borderColor: "var(--t-line)" }}>
+    <div className="border-t" style={{ borderColor: "var(--t-line)" }}>
       <button
         type="button"
         onClick={onToggle}

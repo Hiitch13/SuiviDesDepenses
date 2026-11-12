@@ -59,7 +59,7 @@ export function Reservoir({ balance, income, daysLeft, payDaySet }: Props) {
 
   return (
     <section
-      className="relative isolate min-h-[19rem] overflow-hidden sm:min-h-[22rem]"
+      className="relative isolate min-h-[19rem] overflow-hidden sm:min-h-[22rem] lg:mx-4 lg:mt-4 lg:min-h-[17rem] lg:rounded-2xl"
       style={{ backgroundColor: "var(--t-pine)" }}
     >
       {/* Le niveau. Seul élément décoratif de l'app, et il porte une donnée. */}

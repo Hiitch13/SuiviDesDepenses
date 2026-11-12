@@ -2,6 +2,7 @@
 
 import { CalendarDays, PiggyBank, Plus, Search, SlidersHorizontal } from "lucide-react"
 import { cn } from "@/lib/utils"
+import { Wordmark } from "./ui"
 
 export type Screen = "mois" | "historique" | "epargne" | "reglages"
 
@@ -30,7 +31,7 @@ export function Dock({
   return (
     <nav
       aria-label="Navigation principale"
-      className="fixed inset-x-0 bottom-0 z-40 border-t"
+      className="fixed inset-x-0 bottom-0 z-40 border-t lg:hidden"
       style={{
         backgroundColor: "var(--t-ink)",
         borderColor: "var(--t-line)",
@@ -59,6 +60,63 @@ export function Dock({
           <DockButton key={item.id} {...item} active={screen === item.id} onClick={() => onScreen(item.id)} />
         ))}
       </div>
+    </nav>
+  )
+}
+
+/**
+ * Sur grand écran, la navigation passe dans une colonne à gauche : le pouce
+ * n'est plus le sujet, la place en largeur si.
+ */
+export function Sidebar({
+  screen,
+  onScreen,
+  onAdd,
+  canAdd,
+}: {
+  screen: Screen
+  onScreen: (s: Screen) => void
+  onAdd: () => void
+  canAdd: boolean
+}) {
+  return (
+    <nav
+      aria-label="Navigation principale"
+      className="fixed inset-y-0 left-0 z-40 hidden w-56 flex-col gap-1 border-r px-3 py-5 lg:flex"
+      style={{ backgroundColor: "var(--t-ink)", borderColor: "var(--t-line)" }}
+    >
+      <div className="px-3 pb-5">
+        <Wordmark />
+      </div>
+      <button
+        type="button"
+        onClick={onAdd}
+        disabled={!canAdd}
+        className="mb-4 flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold disabled:opacity-40"
+        style={{ backgroundColor: "var(--t-brass)", color: "var(--t-ink)" }}
+      >
+        <Plus className="size-4" strokeWidth={2.5} />
+        Noter une dépense
+      </button>
+      {ITEMS.map(({ id, label, Icon }) => {
+        const active = screen === id
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => onScreen(id)}
+            aria-current={active ? "page" : undefined}
+            className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors hover:bg-white/[0.04]"
+            style={{
+              color: active ? "var(--t-brass)" : "var(--t-sage)",
+              backgroundColor: active ? "var(--t-pine)" : undefined,
+            }}
+          >
+            <Icon className="size-[1.1rem] shrink-0" strokeWidth={active ? 2.4 : 1.9} />
+            {label}
+          </button>
+        )
+      })}
     </nav>
   )
 }

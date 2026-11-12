@@ -16,7 +16,7 @@ import { useToast } from "@/components/ui/use-toast"
 
 import { CategoryBars, ComparisonList, EvolutionChart } from "@/components/thrift/charts"
 import { Chip, FIELD, FIELD_STYLE, IconButton, LABEL, LABEL_STYLE, Sheet } from "@/components/thrift/controls"
-import { Dock, type Screen } from "@/components/thrift/dock"
+import { Dock, Sidebar, type Screen } from "@/components/thrift/dock"
 import { Login } from "@/components/thrift/login"
 import { Reservoir } from "@/components/thrift/reservoir"
 import { RecalibrateSheet, SavingsMoveSheet } from "@/components/thrift/savings-move-sheet"
@@ -1247,11 +1247,13 @@ export default function Thrift() {
     <div className="min-h-[100svh]" style={{ backgroundColor: "var(--t-ink)" }}>
       {/* Barre haute */}
       <header
-        className="sticky top-0 z-30 border-b"
+        className="sticky top-0 z-30 border-b lg:pl-56"
         style={{ backgroundColor: "var(--t-ink)", borderColor: "var(--t-line)" }}
       >
-        <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3">
-          <Wordmark />
+        <div className="mx-auto flex max-w-2xl items-center gap-3 px-4 py-3 lg:max-w-6xl">
+          <span className="lg:hidden">
+            <Wordmark />
+          </span>
 
           <button
             type="button"
@@ -1276,7 +1278,8 @@ export default function Thrift() {
         </div>
       </header>
 
-      <main className="pb-dock mx-auto max-w-2xl">
+      <div className="lg:pl-56">
+      <main className="pb-dock mx-auto max-w-2xl lg:max-w-6xl">
         {/* Bascule entre le budget personnel et celui du foyer. Elle ne sert
             que sur l'écran du mois : ailleurs, tout est personnel. */}
         {household && screen === "mois" && (
@@ -1302,7 +1305,8 @@ export default function Thrift() {
 
         {/* ===================== FOYER ===================== */}
         {screen === "mois" && isShared && currentHouseholdMonth && settlement && (
-          <div className="space-y-4 px-4 pt-4">
+          <div className="px-4 pt-4 space-y-4 lg:grid lg:grid-cols-2 lg:items-start lg:gap-4 lg:space-y-0">
+            <div className="space-y-4">
             <Panel>
               <SectionTitle>{household!.name}</SectionTitle>
               <p className="figure-hero text-[clamp(2.5rem,12vw,3.75rem)]" style={{ color: "var(--t-paper)" }}>
@@ -1372,7 +1376,9 @@ export default function Thrift() {
                 )}
               </div>
             </Panel>
+            </div>
 
+            <div className="space-y-4">
             <Panel>
               <SectionTitle aside={euros(sharedTotal - currentHouseholdMonth.fixedExpenses.reduce((a, f) => a + f.amount, 0))}>
                 Où ça part
@@ -1488,6 +1494,7 @@ export default function Thrift() {
                 ))
               )}
             </Panel>
+            </div>
           </div>
         )}
 
@@ -1534,6 +1541,8 @@ export default function Thrift() {
                   </Panel>
                 )}
 
+                <div className="space-y-4 lg:grid lg:grid-cols-2 lg:items-start lg:gap-4 lg:space-y-0">
+                <div className="space-y-4">
                 {/* Ce qui mérite une réaction, en haut. */}
                 {(overBudget.length > 0 || pacing) && (
                   <Panel className="space-y-2.5">
@@ -1639,6 +1648,9 @@ export default function Thrift() {
                   </Panel>
                 )}
 
+                </div>
+
+                <div className="space-y-4">
                 <Panel>
                   <SectionTitle aside={euros(totals.totalIncome)}>Revenus</SectionTitle>
                   <InlineAmountField
@@ -1761,13 +1773,16 @@ export default function Thrift() {
                     ))
                   )}
                 </Panel>
+                </div>
+                </div>
               </div>
             </>
           ))}
 
         {/* ===================== HISTORIQUE ===================== */}
         {screen === "historique" && (
-          <div className="space-y-4 px-4 pt-4">
+          <div className="px-4 pt-4 space-y-4 lg:grid lg:grid-cols-2 lg:items-start lg:gap-4 lg:space-y-0">
+            <div className="space-y-4">
             <Panel>
               <SectionTitle>Rechercher</SectionTitle>
               <div className="relative">
@@ -1849,7 +1864,9 @@ export default function Thrift() {
                 </p>
               )}
             </Panel>
+            </div>
 
+            <div className="space-y-4">
             <Panel>
               <SectionTitle aside={`${history.length} mois`}>Évolution</SectionTitle>
               <EvolutionChart history={history} />
@@ -1923,6 +1940,7 @@ export default function Thrift() {
                 <Download className="size-4" /> Télécharger le CSV
               </button>
             </Panel>
+            </div>
           </div>
         )}
 
@@ -2025,7 +2043,8 @@ export default function Thrift() {
 
         {/* ===================== RÉGLAGES ===================== */}
         {screen === "reglages" && (
-          <div className="space-y-4 px-4 pt-4">
+          <div className="px-4 pt-4 space-y-4 lg:grid lg:grid-cols-2 lg:items-start lg:gap-4 lg:space-y-0">
+            <div className="space-y-4">
             {/* Invitations reçues, en premier : quelqu'un attend une réponse. */}
             {invites.length > 0 && (
               <Panel>
@@ -2186,7 +2205,9 @@ export default function Thrift() {
                 ))}
               </select>
             </Panel>
+            </div>
 
+            <div className="space-y-4">
             <Panel flush>
               <div className="px-4 pb-1 pt-3">
                 <SectionTitle>Catégories</SectionTitle>
@@ -2300,11 +2321,14 @@ export default function Thrift() {
                 </span>
               </Row>
             </Panel>
+            </div>
           </div>
         )}
       </main>
+      </div>
 
       <Dock screen={screen} onScreen={setScreen} onAdd={() => openExpenseSheet()} canAdd={!!month} />
+      <Sidebar screen={screen} onScreen={setScreen} onAdd={() => openExpenseSheet()} canAdd={!!month} />
 
       {/* ===================== Noter une dépense ===================== */}
       <Sheet
